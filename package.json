@@ -1,11 +1,19 @@
 {
   "name": "olla-chat",
-  "publisher": "vigne",
+  "publisher": "vigneshkarnika",
   "displayName": "Olla Chat",
   "description": "Professional AI assistant for VS Code with Ollama-first Ask, Plan, and Agent workflows.",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "icon": "media/icon.png",
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vkfolio/olla-chat.git"
+  },
+  "homepage": "https://github.com/vkfolio/olla-chat",
+  "bugs": {
+    "url": "https://github.com/vkfolio/olla-chat/issues"
+  },
   "keywords": [
     "ollama",
     "ai",
@@ -134,13 +142,14 @@
     "compile": "webpack --mode development",
     "watch": "webpack --mode development --watch",
     "package": "webpack --mode production --devtool hidden-source-map",
-    "package:vsix": "npx @vscode/vsce package --out olla-chat.vsix",
+    "package:vsix": "vsce package --out olla-chat.vsix",
     "webpack": "webpack --mode development",
     "webpack-dev": "webpack --mode development --watch"
   },
   "devDependencies": {
     "@types/node": "18.x",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.7.1",
     "ts-loader": "^9.5.1",
     "typescript": "^5.3.3",
     "webpack": "^5.90.0",

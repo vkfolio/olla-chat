@@ -13,3 +13,4 @@ build
 out
 package-lock.json
 .claude
+.npm-cache
