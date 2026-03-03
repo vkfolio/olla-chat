@@ -63,21 +63,34 @@ export class ToolRuntime {
             toolCallId,
             toolName
         });
-        switch (toolName) {
-            case 'read_file':
-                return { kind: 'completed', output: await this.readFile(args) };
-            case 'list_dir':
-                return { kind: 'completed', output: await this.listDir(args) };
-            case 'search_text':
-                return { kind: 'completed', output: await this.searchText(args) };
-            case 'get_symbols':
-                return { kind: 'completed', output: await this.getSymbols(args) };
-            case 'propose_patch':
-                return this.proposePatch(sessionId, toolCallId, args);
-            case 'run_command':
-                return this.proposeCommand(sessionId, toolCallId, args);
-            default:
-                return { kind: 'completed', output: `Unknown tool: ${toolName}` };
+        try {
+            switch (toolName) {
+                case 'read_file':
+                    return { kind: 'completed', output: await this.readFile(args) };
+                case 'list_dir':
+                    return { kind: 'completed', output: await this.listDir(args) };
+                case 'search_text':
+                    return { kind: 'completed', output: await this.searchText(args) };
+                case 'get_symbols':
+                    return { kind: 'completed', output: await this.getSymbols(args) };
+                case 'propose_patch':
+                    return this.proposePatch(sessionId, toolCallId, args);
+                case 'run_command':
+                    return this.proposeCommand(sessionId, toolCallId, args);
+                default:
+                    return { kind: 'completed', output: `Unknown tool: ${toolName}` };
+            }
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            debugError('ToolRuntime', 'Tool execution argument/validation error', error, {
+                sessionId,
+                toolCallId,
+                toolName
+            });
+            return {
+                kind: 'completed',
+                output: `Tool "${toolName}" failed: ${message}`
+            };
         }
     }
 

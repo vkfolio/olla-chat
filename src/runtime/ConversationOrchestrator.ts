@@ -36,6 +36,7 @@ interface SelectionSnapshot {
     turnId: string;
     uri: string;
     filePath: string;
+    languageId: string;
     start: vscode.Position;
     end: vscode.Position;
     startOffset: number;
@@ -52,6 +53,8 @@ interface SelectionUndoState {
     anchorOffset: number;
     beforeText: string;
     afterText: string;
+    beforeVersion: number;
+    afterVersion: number;
 }
 
 type EmitFn = (event: ServerEvent) => void;
@@ -64,6 +67,7 @@ export class ConversationOrchestrator {
     private readonly pendingContinuations = new Map<string, PendingContinuation>();
     private readonly selectionSnapshots = new Map<string, SelectionSnapshot>();
     private readonly pendingSelectionReplace = new Map<string, { sessionId: string; turnId: string; text: string }>();
+    private readonly selectionReplaceIntent = new Map<string, boolean>();
     private readonly selectionUndoState = new Map<string, SelectionUndoState>();
     private activeSessionId = '';
 
@@ -306,6 +310,7 @@ export class ConversationOrchestrator {
             this.emit({ type: 'error', message: 'No available session to handle turn.' });
             return;
         }
+        this.clearPendingSelectionRequestsForSession(session.id);
 
         const mode = request.mode ?? session.mode;
         const requestedModel = request.model ?? session.model ?? this.modelService.getConfiguredModel();
@@ -351,15 +356,21 @@ export class ConversationOrchestrator {
 
         this.emit({ type: 'session_updated', session: nextSession, activeSessionId: this.activeSessionId });
         this.emit({ type: 'turn_started', sessionId: nextSession.id, turnId, mode });
-        const selectionSnapshot = this.captureSelectionSnapshot(nextSession.id, turnId);
+        const selectionKey = this.selectionKey(nextSession.id, turnId);
+        const editIntent = this.shouldTreatAsSelectionEditRequest(request.text);
+        const allowCursorInsert = editIntent && (mode === 'agent' || mode === 'ask');
+        const selectionSnapshot = this.captureSelectionSnapshot(nextSession.id, turnId, allowCursorInsert);
         if (selectionSnapshot) {
-            this.selectionSnapshots.set(this.selectionKey(nextSession.id, turnId), selectionSnapshot);
+            this.selectionSnapshots.set(selectionKey, selectionSnapshot);
+            this.selectionReplaceIntent.set(selectionKey, allowCursorInsert);
             debugLog('Orchestrator', 'Captured selection snapshot', {
                 sessionId: nextSession.id,
                 turnId,
                 filePath: selectionSnapshot.filePath,
+                languageId: selectionSnapshot.languageId,
                 range: selectionSnapshot.rangeLabel,
-                chars: selectionSnapshot.selectedText.length
+                chars: selectionSnapshot.selectedText.length,
+                editIntent: allowCursorInsert
             });
             this.emit({
                 type: 'selection_context',
@@ -369,6 +380,8 @@ export class ConversationOrchestrator {
                 range: selectionSnapshot.rangeLabel,
                 chars: selectionSnapshot.selectedText.length
             });
+        } else {
+            this.selectionReplaceIntent.delete(selectionKey);
         }
 
         if (model !== requestedModel) {
@@ -451,11 +464,19 @@ export class ConversationOrchestrator {
 
             const history = nextSession.messages.slice(-16);
             const imageAttachments = nextSession.attachments.filter((attachment) => attachment.kind === 'image' && !!attachment.imageBase64);
+            const selectionDirective = selectionSnapshot && this.selectionReplaceIntent.get(selectionKey)
+                ? (
+                    selectionSnapshot.selectedText.length > 0
+                        ? `Selection edit directive: transform only the selected text in ${selectionSnapshot.languageId}. Return only replacement text with no extra commentary, headers, or code fences.`
+                        : `Editor insert directive: generate ${selectionSnapshot.languageId} content to insert at cursor. Return only the insertable code/text with no extra commentary, headers, or code fences.`
+                )
+                : '';
             debugLog('Orchestrator', 'Composing model messages', {
                 sessionId: nextSession.id,
                 turnId,
                 historyMessages: history.length,
-                imageAttachments: imageAttachments.length
+                imageAttachments: imageAttachments.length,
+                selectionDirective: selectionDirective.length > 0
             });
 
             const messages: BaseMessage[] = [
@@ -472,6 +493,7 @@ export class ConversationOrchestrator {
                                 type: 'text',
                                 text:
                                     `${request.text}\n\n` +
+                                    `${selectionDirective ? `${selectionDirective}\n\n` : ''}` +
                                     `Use this context bundle when relevant:\n${context.text}\n\n` +
                                     `Citations:\n- ${context.citations.join('\n- ')}`
                             },
@@ -483,6 +505,7 @@ export class ConversationOrchestrator {
                     } as any)
                     : new HumanMessage(
                         `${request.text}\n\n` +
+                        `${selectionDirective ? `${selectionDirective}\n\n` : ''}` +
                         `Use this context bundle when relevant:\n${context.text}\n\n` +
                         `Citations:\n- ${context.citations.join('\n- ')}`
                     )
@@ -861,14 +884,19 @@ export class ConversationOrchestrator {
     ): Promise<void> {
         const key = this.selectionKey(sessionId, turnId);
         const snapshot = this.selectionSnapshots.get(key);
+        const shouldReplace = this.selectionReplaceIntent.get(key) ?? false;
         debugLog('Orchestrator', 'Evaluating post-turn selection replacement', {
             sessionId,
             turnId,
             mode,
             hasSnapshot: !!snapshot,
-            responseLength: responseText.length
+            responseLength: responseText.length,
+            shouldReplace
         });
-        if (!snapshot || responseText.trim().length === 0) {
+        if (!snapshot || responseText.trim().length === 0 || !shouldReplace) {
+            this.selectionSnapshots.delete(key);
+            this.pendingSelectionReplace.delete(key);
+            this.selectionReplaceIntent.delete(key);
             return;
         }
 
@@ -896,6 +924,7 @@ export class ConversationOrchestrator {
         }
 
         this.selectionSnapshots.delete(key);
+        this.selectionReplaceIntent.delete(key);
     }
 
     private async handleApplySelectionReplace(sessionId: string, turnId: string): Promise<void> {
@@ -941,6 +970,26 @@ export class ConversationOrchestrator {
             const editor = await vscode.window.showTextDocument(document, { preview: false, preserveFocus: true });
             const targetRange = this.resolveUndoRange(document, state);
             if (!targetRange) {
+                debugLog('Orchestrator', 'Undo range not found, attempting editor undo fallback', {
+                    sessionId,
+                    turnId,
+                    filePath: state.filePath,
+                    documentVersion: document.version,
+                    expectedAfterVersion: state.afterVersion
+                });
+                const beforeVersion = document.version;
+                await vscode.commands.executeCommand('undo');
+                const afterVersion = editor.document.version;
+                if (afterVersion !== beforeVersion) {
+                    this.selectionUndoState.delete(key);
+                    this.emit({
+                        type: 'selection_undone',
+                        sessionId,
+                        turnId,
+                        filePath: state.filePath
+                    });
+                    return;
+                }
                 this.emit({
                     type: 'selection_replace_failed',
                     sessionId,
@@ -1011,11 +1060,17 @@ export class ConversationOrchestrator {
             if (mode === 'agent_auto') {
                 this.selectionSnapshots.delete(key);
                 this.pendingSelectionReplace.delete(key);
+                this.selectionReplaceIntent.delete(key);
             }
         };
         const snapshot = this.selectionSnapshots.get(key);
         if (!snapshot) {
             emitFailure('No selection snapshot found for this turn.');
+            return;
+        }
+        const normalizedReplacement = this.normalizeReplacementForEditor(replacementText, snapshot);
+        if (normalizedReplacement.length === 0) {
+            emitFailure('Model response did not contain usable replacement content.');
             return;
         }
 
@@ -1027,11 +1082,13 @@ export class ConversationOrchestrator {
                 emitFailure('Original selection no longer matches the document. Re-select text and retry.');
                 return;
             }
+            const replacementForDocument = this.normalizeTextForDocumentEol(normalizedReplacement, document);
 
             const beforeText = document.getText(targetRange);
             const anchorOffset = document.offsetAt(targetRange.start);
+            const beforeVersion = document.version;
             const applied = await editor.edit((editBuilder) => {
-                editBuilder.replace(targetRange, replacementText);
+                editBuilder.replace(targetRange, replacementForDocument);
             }, { undoStopBefore: true, undoStopAfter: true });
 
             if (!applied) {
@@ -1041,6 +1098,7 @@ export class ConversationOrchestrator {
 
             this.pendingSelectionReplace.delete(key);
             this.selectionSnapshots.delete(key);
+            this.selectionReplaceIntent.delete(key);
             this.selectionUndoState.set(key, {
                 sessionId,
                 turnId,
@@ -1049,7 +1107,9 @@ export class ConversationOrchestrator {
                 rangeLabel: snapshot.rangeLabel,
                 anchorOffset,
                 beforeText,
-                afterText: replacementText
+                afterText: replacementForDocument,
+                beforeVersion,
+                afterVersion: editor.document.version
             });
             debugLog('Orchestrator', 'Selection replacement applied', {
                 sessionId,
@@ -1057,7 +1117,7 @@ export class ConversationOrchestrator {
                 filePath: snapshot.filePath,
                 range: snapshot.rangeLabel,
                 mode,
-                replacementLength: replacementText.length
+                replacementLength: replacementForDocument.length
             });
             this.emit({
                 type: 'selection_replaced',
@@ -1223,19 +1283,26 @@ export class ConversationOrchestrator {
         return basePrompt.join(' ');
     }
 
-    private captureSelectionSnapshot(sessionId: string, turnId: string): SelectionSnapshot | undefined {
+    private captureSelectionSnapshot(sessionId: string, turnId: string, allowCursorInsert: boolean): SelectionSnapshot | undefined {
         const editor = vscode.window.activeTextEditor;
-        if (!editor || editor.selection.isEmpty) {
+        if (!editor) {
             debugLog('Orchestrator', 'No active selection for turn', { sessionId, turnId });
-            return undefined;
-        }
-        const selectedText = editor.document.getText(editor.selection);
-        if (selectedText.length === 0) {
-            debugLog('Orchestrator', 'Selection snapshot skipped due to empty text', { sessionId, turnId });
             return undefined;
         }
         const start = editor.selection.start;
         const end = editor.selection.end;
+        const selectedText = editor.document.getText(editor.selection);
+        if (editor.selection.isEmpty && !allowCursorInsert) {
+            debugLog('Orchestrator', 'Selection snapshot skipped because selection is empty and cursor insert is disabled', {
+                sessionId,
+                turnId
+            });
+            return undefined;
+        }
+        if (!editor.selection.isEmpty && selectedText.length === 0) {
+            debugLog('Orchestrator', 'Selection snapshot skipped due to empty text', { sessionId, turnId });
+            return undefined;
+        }
         const startOffset = editor.document.offsetAt(start);
         const rangeLabel = `${start.line + 1}:${start.character + 1}-${end.line + 1}:${end.character + 1}`;
         return {
@@ -1243,6 +1310,7 @@ export class ConversationOrchestrator {
             turnId,
             uri: editor.document.uri.fsPath,
             filePath: this.workspaceRelative(editor.document.uri.fsPath),
+            languageId: editor.document.languageId || 'plaintext',
             start,
             end,
             startOffset,
@@ -1255,6 +1323,36 @@ export class ConversationOrchestrator {
         return `${sessionId}:${turnId}`;
     }
 
+    private shouldTreatAsSelectionEditRequest(text: string): boolean {
+        const normalized = text.trim().toLowerCase();
+        if (!normalized) {
+            return false;
+        }
+        const editKeywords = /(elobrat|elaborat|expand|rewrite|rephrase|paraphrase|improv|refin|polish|fix|correct|summariz|simplif|shorten|lengthen|clarif|humaniz|create|add|write|implement|generate|build|scaffold|function|class|module|api)/;
+        if (editKeywords.test(normalized)) {
+            return true;
+        }
+        return /(this text|this section|selected text|selection|in this file|here|in current file)/.test(normalized);
+    }
+
+    private clearPendingSelectionRequestsForSession(sessionId: string): void {
+        for (const [key, snapshot] of this.selectionSnapshots.entries()) {
+            if (snapshot.sessionId === sessionId) {
+                this.selectionSnapshots.delete(key);
+            }
+        }
+        for (const [key, pending] of this.pendingSelectionReplace.entries()) {
+            if (pending.sessionId === sessionId) {
+                this.pendingSelectionReplace.delete(key);
+            }
+        }
+        for (const key of this.selectionReplaceIntent.keys()) {
+            if (key.startsWith(`${sessionId}:`)) {
+                this.selectionReplaceIntent.delete(key);
+            }
+        }
+    }
+
     private clearSelectionStateForSession(sessionId: string): void {
         for (const [key, snapshot] of this.selectionSnapshots.entries()) {
             if (snapshot.sessionId === sessionId) {
@@ -1264,6 +1362,11 @@ export class ConversationOrchestrator {
         for (const [key, pending] of this.pendingSelectionReplace.entries()) {
             if (pending.sessionId === sessionId) {
                 this.pendingSelectionReplace.delete(key);
+            }
+        }
+        for (const key of this.selectionReplaceIntent.keys()) {
+            if (key.startsWith(`${sessionId}:`)) {
+                this.selectionReplaceIntent.delete(key);
             }
         }
         for (const [key, undoState] of this.selectionUndoState.entries()) {
@@ -1332,6 +1435,34 @@ export class ConversationOrchestrator {
             hit = content.indexOf(needle, hit + 1);
         }
         return best;
+    }
+
+    private normalizeReplacementForEditor(text: string, snapshot: SelectionSnapshot): string {
+        const trimmed = text.trim();
+        if (!trimmed) {
+            return '';
+        }
+        // For cursor inserts, prefer pure code payload if the model wrapped output in fences.
+        if (snapshot.selectedText.length === 0) {
+            const fenced = this.extractFirstCodeFence(trimmed);
+            if (fenced) {
+                return fenced;
+            }
+        }
+        return trimmed;
+    }
+
+    private normalizeTextForDocumentEol(text: string, document: vscode.TextDocument): string {
+        const eol = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
+        return text.replace(/\r?\n/g, eol);
+    }
+
+    private extractFirstCodeFence(text: string): string | undefined {
+        const match = text.match(/```[\w-]*\n([\s\S]*?)```/);
+        if (!match || match.length < 2) {
+            return undefined;
+        }
+        return match[1].trim();
     }
 
     private workspaceRelative(filePath: string): string {
@@ -1445,6 +1576,7 @@ export class ConversationOrchestrator {
         const key = this.selectionKey(sessionId, turnId);
         this.selectionSnapshots.delete(key);
         this.pendingSelectionReplace.delete(key);
+        this.selectionReplaceIntent.delete(key);
         this.selectionUndoState.delete(key);
         await this.sessionStore.closeRunningTimelineForTurn(sessionId, turnId, 'error');
         let nextSession = await this.sessionStore.appendMessage(sessionId, {

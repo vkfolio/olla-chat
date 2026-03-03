@@ -290,6 +290,9 @@ function App() {
             delete next[message.sessionId];
             return next;
           });
+          setPendingSelectionReplace((prev) => Object.fromEntries(
+            Object.entries(prev).filter(([, entry]) => entry.sessionId !== message.sessionId)
+          ));
           break;
         case 'token_stream':
           setStreamingText((prev) => ({

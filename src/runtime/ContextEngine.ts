@@ -39,7 +39,7 @@ export class ContextEngine {
             (policy === 'auto_light' && isCodeIntent);
 
         const editor = vscode.window.activeTextEditor;
-        if (editor && shouldUseWorkspace) {
+        if (editor) {
             const document = editor.document;
             if (scope.useSelection && !editor.selection.isEmpty) {
                 citations.push(document.fileName);
@@ -50,7 +50,7 @@ export class ContextEngine {
                     `${document.getText(editor.selection).slice(0, 4000)}\n` +
                     '```'
                 );
-            } else if (scope.useActiveFile) {
+            } else if (scope.useActiveFile && shouldUseWorkspace) {
                 citations.push(document.fileName);
                 scopesUsed.push('Active File');
                 sections.push(
