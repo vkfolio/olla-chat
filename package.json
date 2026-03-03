@@ -3,7 +3,7 @@
   "publisher": "vigneshkarnika",
   "displayName": "Olla Chat",
   "description": "Professional AI assistant for VS Code with Ollama-first Ask, Plan, and Agent workflows.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "icon": "media/icon.png",
   "license": "UNLICENSED",
   "repository": {

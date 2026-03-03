@@ -1,93 +1,86 @@
 # Olla Chat
 
-Professional AI assistant sidebar for VS Code with an Ollama-first workflow. It supports `Ask`, `Plan`, and `Agent` modes, streaming responses, editable approvals, file/image attachments, and selection-aware edits.
+**Professional AI coding assistant for VS Code, built Ollama-first.**
 
-## Features
+Olla Chat gives you Ask, Plan, and Agent workflows in one sidebar, with streaming responses, context-aware editing, human approvals, and local-model control.
 
-- Multi-session chat with mode switching (`Ask`, `Plan`, `Agent`)
-- Ollama model selection and temperature control
-- Selection/file/project-aware context controls
-- Streaming assistant output and timeline events
-- Human-in-the-loop approvals for risky actions
-- Apply/undo selection replacement flow
-- Vision attachments with compatible models
-- VS Code theme-aware UI
+![Olla Chat Screenshot](./media/chat-screenshot.png)
 
-## Requirements
+## Why Olla Chat
 
-- VS Code `>= 1.85.0`
-- Ollama server running (default: `http://localhost:11434`)
-- At least one installed model (`ollama list`)
+- Ollama-first local or remote model routing
+- Multi-session conversations with mode + model per chat
+- Selection-aware editing for real code writing workflows
+- Human-in-the-loop safety for file-changing actions
+- Clean, theme-aware interface designed for daily dev use
+
+## Core Features
+
+- **Modes:** `Ask`, `Plan`, `Agent`
+- **Streaming UI:** token streaming + timeline events
+- **Context controls:** `Selection`, `File`, `Open Files`, `Project`
+- **Smart edits:** selection replace flow with apply/undo
+- **Attachments:** file + image upload support
+- **Vision model checks:** warns when selected model is not vision-capable
+- **Model controls:** picker + temperature at composer level
+- **Debug observability:** detailed internal logs via Output channel
+
+## Quick Start
+
+1. Install the extension.
+2. Start Ollama (or point to your remote Ollama endpoint).
+3. Open **Olla Chat** from the Activity Bar.
+4. Choose a model and mode, then send a prompt.
+
+Default endpoint:
+
+```text
+http://localhost:11434
+```
+
+## How To Use
+
+### 1. Choose a mode
+
+- **Ask:** direct Q&A, explanations, focused answers
+- **Plan:** structured step-by-step planning before action
+- **Agent:** autonomous execution with approval gates for risky operations
+
+### 2. Control context
+
+Use scope chips to decide what the model sees:
+
+- `Selection` for selected text/code
+- `File` for active editor file
+- `Open Files` for broader current-work context
+- `Project` for repository-level understanding
+
+### 3. Edit from chat
+
+- In **Agent mode**, selection-targeted edit responses can auto-apply.
+- In **Ask mode**, you get an explicit apply confirmation.
+- Use **Undo** from chat to revert applied selection replacements.
+
+### 4. Work with attachments
+
+- Attach files/images from the composer.
+- For image analysis, select a vision-capable model.
 
 ## Configuration
 
-Key settings (prefix `olla-chat.*`):
+Settings prefix: `olla-chat.*`
 
-- `ollamaUrl`: Ollama base URL
-- `ollamaModel`: default model name
-- `temperature`: generation temperature
-- `defaultMode`: `ask | plan | agent`
-- `approvalPolicy`: `human_gated | auto_safe`
-- `contextPolicy`: `auto_light | manual_only | always_project`
-- `debugLogs`: enables verbose Output channel logs
+- `ollamaUrl` - Ollama base URL
+- `ollamaModel` - default model
+- `temperature` - generation temperature (`0` to `2`)
+- `defaultMode` - `ask | plan | agent`
+- `approvalPolicy` - `human_gated | auto_safe`
+- `contextPolicy` - `auto_light | manual_only | always_project`
+- `maxContextFiles` - max files sampled for project context
+- `debugLogs` - verbose logs in **Olla Chat Debug**
 
-## Development
+## Troubleshooting
 
-From repository root:
-
-```bash
-npm install
-npm run compile
-```
-
-Build webview UI:
-
-```bash
-npm --prefix webview-ui install
-npm run build:webview
-```
-
-Run extension locally: press `F5` in VS Code (`Run Extension`).
-
-## Packaging
-
-Build production artifacts and VSIX:
-
-```bash
-npm run build:all
-npm run package:vsix
-```
-
-Output file: `olla-chat.vsix` (repository root).
-
-Install locally for validation:
-
-```bash
-code --install-extension olla-chat.vsix
-```
-
-## Marketplace Assets
-
-Extension listing icon requirements:
-
-- Format: PNG
-- Size: **128 x 128 px** (required minimum)
-- Recommended source design: 256 x 256, exported to 128 x 128
-
-Current placeholder icon is at `media/icon.png`. Replace it before publishing.
-
-Activity bar icon is at `media/view-icon.svg`.
-
-## Publish Checklist
-
-- Update `publisher` in `package.json` to your real VS Marketplace publisher ID.
-- Set a release version in `package.json`.
-- Replace placeholder icon and verify in light/dark themes.
-- Run:
-  - `npm run build:all`
-  - `npm run package:vsix`
-- Publish with VSCE:
-
-```bash
-npx @vscode/vsce publish
-```
+- **Model not found:** run `ollama list`, then `ollama pull <model>`.
+- **Image error on vision request:** choose a model marked vision-capable.
+- **No response stream:** verify `ollamaUrl`, model availability, and logs (`Olla Chat Debug`).
