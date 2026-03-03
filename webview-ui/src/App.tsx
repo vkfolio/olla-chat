@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import {
   Check,
   ChevronDown,
   Clock3,
+  Copy,
   FileUp,
   Loader2,
   MessageSquare,
@@ -132,6 +133,199 @@ type FeedItem =
   | { kind: 'event'; id: string; createdAt: number; event: TimelineEvent | TransientEvent };
 
 const SUGGESTED_ACTIONS = ['Build Workspace', 'Show Config', 'Review Open Files'];
+
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      components={{
+        code({ className, children, ...props }) {
+          const raw = String(children).replace(/\n$/, '');
+          const match = /language-([\w-]+)/.exec(className || '');
+          const language = (match?.[1] || 'text').toLowerCase();
+          if (match || raw.includes('\n')) {
+            return <CodeBlock code={raw} language={language} />;
+          }
+          return (
+            <code className={`inline-code ${className || ''}`} {...props}>
+              {children}
+            </code>
+          );
+        }
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+}
+
+function CodeBlock({ code, language }: { code: string; language: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const onCopy = async () => {
+    const ok = await copyToClipboard(code);
+    if (!ok) return;
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  };
+
+  return (
+    <div className={`code-block lang-${language}`}>
+      <div className="code-head">
+        <span className="code-lang">{formatLanguageLabel(language)}</span>
+        <button className={`code-copy ${copied ? 'copied' : ''}`} onClick={onCopy}>
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <pre>
+        <code>{renderHighlightedCode(code, language)}</code>
+      </pre>
+    </div>
+  );
+}
+
+interface Token {
+  text: string;
+  type?: 'keyword' | 'string' | 'number' | 'comment' | 'operator' | 'property' | 'boolean' | 'command';
+}
+
+function renderHighlightedCode(code: string, language: string): ReactNode {
+  const tokens = tokenizeCode(code, language);
+  return tokens.map((token, index) => (
+    <span key={`${index}_${token.text.length}`} className={token.type ? `tok-${token.type}` : undefined}>
+      {token.text}
+    </span>
+  ));
+}
+
+function tokenizeCode(code: string, language: string): Token[] {
+  if (isJsLike(language)) {
+    const pattern = /\/\/.*$|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b\d+(?:\.\d+)?\b|\b(?:const|let|var|function|return|if|else|for|while|class|import|export|from|new|try|catch|throw|async|await|switch|case|break|continue|default|true|false|null|undefined)\b|=>|[{}()[\].,;:+\-*/%=!<>|&^~?]/gm;
+    return tokenizeByPattern(code, pattern, (value) => classifyJsToken(value));
+  }
+  if (language === 'json') {
+    const pattern = /"(?:\\.|[^"\\])*"|\b-?\d+(?:\.\d+)?(?:e[+-]?\d+)?\b|\b(?:true|false|null)\b|[{}[\],:]/gim;
+    return tokenizeByPattern(code, pattern, (value, source, index) => classifyJsonToken(value, source, index));
+  }
+  if (language === 'python') {
+    const pattern = /#.*$|"""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b\d+(?:\.\d+)?\b|\b(?:def|class|return|if|elif|else|for|while|import|from|as|try|except|raise|with|lambda|async|await|True|False|None)\b|[(){}[\].,:+\-*/%=<>!]/gm;
+    return tokenizeByPattern(code, pattern, (value) => classifyPythonToken(value));
+  }
+  if (language === 'bash' || language === 'sh' || language === 'shell') {
+    const pattern = /#.*$|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\$\w+|\b\d+\b|\b(?:if|then|fi|for|do|done|while|case|esac|function|echo|export|cd|ls|cat|grep|awk|sed)\b|[(){}[\];|&<>]/gm;
+    return tokenizeByPattern(code, pattern, (value) => classifyShellToken(value));
+  }
+  return [{ text: code }];
+}
+
+function tokenizeByPattern(
+  code: string,
+  pattern: RegExp,
+  classify: (value: string, source: string, index: number) => Token['type']
+): Token[] {
+  const tokens: Token[] = [];
+  let cursor = 0;
+  let match: RegExpExecArray | null = pattern.exec(code);
+  while (match) {
+    const value = match[0];
+    const index = match.index;
+    if (index > cursor) {
+      tokens.push({ text: code.slice(cursor, index) });
+    }
+    tokens.push({ text: value, type: classify(value, code, index) });
+    cursor = index + value.length;
+    match = pattern.exec(code);
+  }
+  if (cursor < code.length) {
+    tokens.push({ text: code.slice(cursor) });
+  }
+  return tokens;
+}
+
+function formatLanguageLabel(language: string): string {
+  const map: Record<string, string> = {
+    js: 'JavaScript',
+    jsx: 'JSX',
+    ts: 'TypeScript',
+    tsx: 'TSX',
+    json: 'JSON',
+    python: 'Python',
+    py: 'Python',
+    bash: 'Bash',
+    sh: 'Shell',
+    shell: 'Shell',
+    text: 'Text'
+  };
+  return map[language] || language.toUpperCase();
+}
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fallback below.
+  }
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+function isJsLike(language: string): boolean {
+  return ['js', 'jsx', 'javascript', 'ts', 'tsx', 'typescript', 'mjs', 'cjs'].includes(language);
+}
+
+function classifyJsToken(value: string): Token['type'] {
+  if (value.startsWith('//') || value.startsWith('/*')) return 'comment';
+  if (value.startsWith('"') || value.startsWith("'") || value.startsWith('`')) return 'string';
+  if (/^\d/.test(value)) return 'number';
+  if (/^(true|false|null|undefined)$/.test(value)) return 'boolean';
+  if (/^[A-Za-z_]/.test(value)) return 'keyword';
+  return 'operator';
+}
+
+function classifyJsonToken(value: string, source: string, index: number): Token['type'] {
+  if (value.startsWith('"')) {
+    const tail = source.slice(index + value.length);
+    return /^\s*:/.test(tail) ? 'property' : 'string';
+  }
+  if (/^(true|false)$/i.test(value)) return 'boolean';
+  if (/^null$/i.test(value)) return 'keyword';
+  if (/^-?\d/.test(value)) return 'number';
+  return 'operator';
+}
+
+function classifyPythonToken(value: string): Token['type'] {
+  if (value.startsWith('#')) return 'comment';
+  if (value.startsWith('"') || value.startsWith("'")) return 'string';
+  if (/^\d/.test(value)) return 'number';
+  if (/^(True|False|None)$/.test(value)) return 'boolean';
+  if (/^[A-Za-z_]/.test(value)) return 'keyword';
+  return 'operator';
+}
+
+function classifyShellToken(value: string): Token['type'] {
+  if (value.startsWith('#')) return 'comment';
+  if (value.startsWith('"') || value.startsWith("'")) return 'string';
+  if (value.startsWith('$')) return 'property';
+  if (/^\d/.test(value)) return 'number';
+  if (/^[A-Za-z_]/.test(value)) return 'command';
+  return 'operator';
+}
 
 function formatRelativeTime(timestamp: number): string {
   const diffMs = Date.now() - timestamp;
@@ -671,7 +865,7 @@ function App() {
                   <div className="user-bubble">{message.content}</div>
                 ) : (
                   <div className="assistant-content markdown-body">
-                    <ReactMarkdown>{message.content}</ReactMarkdown>
+                    <MarkdownContent content={message.content} />
                   </div>
                 )}
               </div>
@@ -702,7 +896,7 @@ function App() {
         {!showSessionsFeed && isStreaming && streamForSession && (
           <div className="msg assistant">
             <div className="assistant-content markdown-body streaming">
-              <ReactMarkdown>{streamForSession}</ReactMarkdown>
+              <MarkdownContent content={streamForSession} />
               <span className="typing-caret" />
             </div>
           </div>
@@ -759,141 +953,145 @@ function App() {
             Selection: {activeSelectionContext.filePath} ({activeSelectionContext.range}) - {activeSelectionContext.chars} chars
           </div>
         )}
-        <div className="attachments-row">
-          {attachments.map((attachment) => (
-            <div key={attachment.id} className="attachment-chip">
-              <span>{attachment.name}</span>
-              <button onClick={() => onDetachAttachment(attachment.id)}>
-                <X size={11} />
-              </button>
-            </div>
-          ))}
-        </div>
-
-        <div className="scope-row">
-          <button className={`scope-chip ${contextScope.useSelection ? 'on' : ''}`} onClick={() => updateScope('useSelection')}>Selection</button>
-          <button className={`scope-chip ${contextScope.useActiveFile ? 'on' : ''}`} onClick={() => updateScope('useActiveFile')}>File</button>
-          <button className={`scope-chip ${contextScope.useOpenFiles ? 'on' : ''}`} onClick={() => updateScope('useOpenFiles')}>Open Files</button>
-          <button className={`scope-chip ${contextScope.useProjectMap ? 'on' : ''}`} onClick={() => updateScope('useProjectMap')}>Project</button>
-        </div>
-
-        <button className="context-btn" onClick={onAttachContext}>
-          <FileUp size={12} />
-          Add Context...
-        </button>
-
-        <textarea
-          ref={textareaRef}
-          className="input-box"
-          value={input}
-          onChange={(e) => {
-            setInput(e.target.value);
-            e.target.style.height = '44px';
-            e.target.style.height = `${Math.min(e.target.scrollHeight, 180)}px`;
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              sendTurn();
-            }
-          }}
-          placeholder={isStreaming ? 'Waiting for response...' : 'Outline the goal or problem to research'}
-          rows={1}
-          disabled={isStreaming || !activeSessionId}
-        />
-
-        <div className="composer-bottom">
-          <div className="bottom-left">
-            <div className="menu-root">
-              <button className="pill-btn" onClick={() => setOpenMenu((prev) => (prev === 'mode' ? null : 'mode'))}>
-                {modeLabel}
-                <ChevronDown size={12} className={openMenu === 'mode' ? 'chev open' : 'chev'} />
-              </button>
-              {openMenu === 'mode' && (
-                <div className="menu-panel bottom-menu">
-                  {(['agent', 'ask', 'plan'] as AssistantMode[]).map((entry) => (
-                    <button
-                      key={entry}
-                      className={`menu-item ${entry === mode ? 'selected' : ''}`}
-                      onClick={() => {
-                        setMode(entry);
-                        setOpenMenu(null);
-                      }}
-                    >
-                      <span>{entry.charAt(0).toUpperCase() + entry.slice(1)}</span>
-                      {entry === mode && <Check size={12} />}
-                    </button>
-                  ))}
+        <div className="composer-panel">
+          <div className="composer-meta-row">
+            <button className="context-btn context-inline" onClick={onAttachContext}>
+              <FileUp size={12} />
+              Add Context...
+            </button>
+            <div className="attachments-row inline">
+              {attachments.map((attachment) => (
+                <div key={attachment.id} className="attachment-chip">
+                  <span>{attachment.name}</span>
+                  <button onClick={() => onDetachAttachment(attachment.id)}>
+                    <X size={11} />
+                  </button>
                 </div>
-              )}
+              ))}
             </div>
+          </div>
 
-            <div className="menu-root">
-              <button className="pill-btn model-pill" onClick={() => setOpenMenu((prev) => (prev === 'model' ? null : 'model'))}>
-                <span>{currentModel}</span>
-                <ChevronDown size={12} className={openMenu === 'model' ? 'chev open' : 'chev'} />
+          <div className="scope-row scope-inline">
+            <button className={`scope-chip ${contextScope.useSelection ? 'on' : ''}`} onClick={() => updateScope('useSelection')}>Selection</button>
+            <button className={`scope-chip ${contextScope.useActiveFile ? 'on' : ''}`} onClick={() => updateScope('useActiveFile')}>File</button>
+            <button className={`scope-chip ${contextScope.useOpenFiles ? 'on' : ''}`} onClick={() => updateScope('useOpenFiles')}>Open Files</button>
+            <button className={`scope-chip ${contextScope.useProjectMap ? 'on' : ''}`} onClick={() => updateScope('useProjectMap')}>Project</button>
+          </div>
+
+          <textarea
+            ref={textareaRef}
+            className="input-box composer-input"
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              e.target.style.height = '44px';
+              e.target.style.height = `${Math.min(e.target.scrollHeight, 180)}px`;
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendTurn();
+              }
+            }}
+            placeholder={isStreaming ? 'Waiting for response...' : 'Outline the goal or problem to research'}
+            rows={1}
+            disabled={isStreaming || !activeSessionId}
+          />
+
+          <div className="composer-bottom composer-dock">
+            <div className="bottom-left">
+              <div className="menu-root">
+                <button className="pill-btn" onClick={() => setOpenMenu((prev) => (prev === 'mode' ? null : 'mode'))}>
+                  {modeLabel}
+                  <ChevronDown size={12} className={openMenu === 'mode' ? 'chev open' : 'chev'} />
+                </button>
+                {openMenu === 'mode' && (
+                  <div className="menu-panel bottom-menu">
+                    {(['agent', 'ask', 'plan'] as AssistantMode[]).map((entry) => (
+                      <button
+                        key={entry}
+                        className={`menu-item ${entry === mode ? 'selected' : ''}`}
+                        onClick={() => {
+                          setMode(entry);
+                          setOpenMenu(null);
+                        }}
+                      >
+                        <span>{entry.charAt(0).toUpperCase() + entry.slice(1)}</span>
+                        {entry === mode && <Check size={12} />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="menu-root">
+                <button className="pill-btn model-pill" onClick={() => setOpenMenu((prev) => (prev === 'model' ? null : 'model'))}>
+                  <span>{currentModel}</span>
+                  <ChevronDown size={12} className={openMenu === 'model' ? 'chev open' : 'chev'} />
+                </button>
+                {openMenu === 'model' && (
+                  <div className="menu-panel bottom-menu model-menu">
+                    {(models.length > 0 ? models : [{ name: currentModel, toolCalling: true, vision: false }]).map((model) => (
+                      <button
+                        key={model.name}
+                        className={`menu-item ${model.name === currentModel ? 'selected' : ''}`}
+                        onClick={() => {
+                          setCurrentModel(model.name);
+                          vscode.postMessage({ type: 'set_model', model: model.name });
+                          setOpenMenu(null);
+                        }}
+                      >
+                        <span>{model.name}</span>
+                        {model.name === currentModel && <Check size={12} />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="menu-root">
+                <button className="pill-btn" onClick={() => setOpenMenu((prev) => (prev === 'temp' ? null : 'temp'))}>
+                  <SlidersHorizontal size={12} />
+                  {temperature.toFixed(1)}
+                </button>
+                {openMenu === 'temp' && (
+                  <div className="menu-panel bottom-menu temp-menu">
+                    <div className="temp-head">Temperature</div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={2}
+                      step={0.1}
+                      value={temperature}
+                      onChange={(e) => updateTemperature(Number(e.target.value))}
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      max={2}
+                      step={0.1}
+                      value={temperature}
+                      onChange={(e) => updateTemperature(Number(e.target.value))}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="menu-root">
+                <button className="pill-btn" onClick={() => updateContextPolicy(contextPolicy === 'auto_light' ? 'manual_only' : contextPolicy === 'manual_only' ? 'always_project' : 'auto_light')}>
+                  {contextPolicy === 'auto_light' ? 'Auto' : contextPolicy === 'manual_only' ? 'Manual' : 'Project'}
+                </button>
+              </div>
+
+              <button className="mini-btn" onClick={() => vscode.postMessage({ type: 'refresh_models' })} title="Refresh models">
+                <RefreshCw size={12} />
               </button>
-              {openMenu === 'model' && (
-                <div className="menu-panel bottom-menu model-menu">
-                  {(models.length > 0 ? models : [{ name: currentModel, toolCalling: true, vision: false }]).map((model) => (
-                    <button
-                      key={model.name}
-                      className={`menu-item ${model.name === currentModel ? 'selected' : ''}`}
-                      onClick={() => {
-                        setCurrentModel(model.name);
-                        vscode.postMessage({ type: 'set_model', model: model.name });
-                        setOpenMenu(null);
-                      }}
-                    >
-                      <span>{model.name}</span>
-                      {model.name === currentModel && <Check size={12} />}
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
 
-            <div className="menu-root">
-              <button className="pill-btn" onClick={() => setOpenMenu((prev) => (prev === 'temp' ? null : 'temp'))}>
-                <SlidersHorizontal size={12} />
-                {temperature.toFixed(1)}
-              </button>
-              {openMenu === 'temp' && (
-                <div className="menu-panel bottom-menu temp-menu">
-                  <div className="temp-head">Temperature</div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={2}
-                    step={0.1}
-                    value={temperature}
-                    onChange={(e) => updateTemperature(Number(e.target.value))}
-                  />
-                  <input
-                    type="number"
-                    min={0}
-                    max={2}
-                    step={0.1}
-                    value={temperature}
-                    onChange={(e) => updateTemperature(Number(e.target.value))}
-                  />
-                </div>
-              )}
-            </div>
-
-            <div className="menu-root">
-              <button className="pill-btn" onClick={() => updateContextPolicy(contextPolicy === 'auto_light' ? 'manual_only' : contextPolicy === 'manual_only' ? 'always_project' : 'auto_light')}>
-                {contextPolicy === 'auto_light' ? 'Auto' : contextPolicy === 'manual_only' ? 'Manual' : 'Project'}
-              </button>
-            </div>
-
-            <button className="mini-btn" onClick={() => vscode.postMessage({ type: 'refresh_models' })} title="Refresh models">
-              <RefreshCw size={12} />
+            <button className={`send send-prominent ${input.trim() ? 'active' : ''}`} onClick={sendTurn} disabled={isStreaming || !activeSessionId}>
+              <SendHorizontal size={15} />
             </button>
           </div>
-          <button className={`send ${input.trim() ? 'active' : ''}`} onClick={sendTurn} disabled={isStreaming || !activeSessionId}>
-            <SendHorizontal size={14} />
-          </button>
         </div>
       </footer>
     </div>

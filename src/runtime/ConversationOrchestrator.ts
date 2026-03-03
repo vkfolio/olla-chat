@@ -465,11 +465,7 @@ export class ConversationOrchestrator {
             const history = nextSession.messages.slice(-16);
             const imageAttachments = nextSession.attachments.filter((attachment) => attachment.kind === 'image' && !!attachment.imageBase64);
             const selectionDirective = selectionSnapshot && this.selectionReplaceIntent.get(selectionKey)
-                ? (
-                    selectionSnapshot.selectedText.length > 0
-                        ? `Selection edit directive: transform only the selected text in ${selectionSnapshot.languageId}. Return only replacement text with no extra commentary, headers, or code fences.`
-                        : `Editor insert directive: generate ${selectionSnapshot.languageId} content to insert at cursor. Return only the insertable code/text with no extra commentary, headers, or code fences.`
-                )
+                ? this.buildSelectionDirective(selectionSnapshot)
                 : '';
             debugLog('Orchestrator', 'Composing model messages', {
                 sessionId: nextSession.id,
@@ -986,7 +982,7 @@ export class ConversationOrchestrator {
         }
 
         try {
-            const document = await vscode.workspace.openTextDocument(vscode.Uri.file(state.uri));
+            const document = await vscode.workspace.openTextDocument(this.toDocumentUri(state.uri));
             const editor = await vscode.window.showTextDocument(document, { preview: false, preserveFocus: true });
             const targetRange = this.resolveUndoRange(document, state);
             if (!targetRange) {
@@ -1099,7 +1095,7 @@ export class ConversationOrchestrator {
         }
 
         try {
-            const document = await vscode.workspace.openTextDocument(vscode.Uri.file(snapshot.uri));
+            const document = await vscode.workspace.openTextDocument(this.toDocumentUri(snapshot.uri));
             const editor = await vscode.window.showTextDocument(document, { preview: false, preserveFocus: true });
             const targetRange = this.resolveSelectionRange(document, snapshot);
             if (!targetRange) {
@@ -1332,8 +1328,8 @@ export class ConversationOrchestrator {
         return {
             sessionId,
             turnId,
-            uri: editor.document.uri.fsPath,
-            filePath: this.workspaceRelative(editor.document.uri.fsPath),
+            uri: editor.document.uri.toString(true),
+            filePath: this.describeEditorTarget(editor.document),
             languageId: editor.document.languageId || 'plaintext',
             start,
             end,
@@ -1466,6 +1462,9 @@ export class ConversationOrchestrator {
         if (!trimmed) {
             return '';
         }
+        if (this.isPlainTextTarget(snapshot)) {
+            return this.stripMarkdownPresentation(trimmed);
+        }
         // Prefer pure payload from code fences for code files or cursor inserts.
         const fenced = this.extractFirstCodeFence(trimmed);
         if (fenced && (snapshot.selectedText.length === 0 || this.isCodeLanguage(snapshot.languageId))) {
@@ -1514,6 +1513,32 @@ export class ConversationOrchestrator {
         return !nonCode.has(languageId.toLowerCase());
     }
 
+    private isPlainTextTarget(snapshot: SelectionSnapshot): boolean {
+        const language = snapshot.languageId.toLowerCase();
+        if (language === 'plaintext' || language === 'text') {
+            return true;
+        }
+        return /\.txt(?:$|\s|\[)/i.test(snapshot.filePath);
+    }
+
+    private stripMarkdownPresentation(text: string): string {
+        let next = text;
+        const fenced = this.extractFirstCodeFence(next);
+        if (fenced) {
+            next = fenced;
+        }
+        next = next
+            .replace(/^#{1,6}\s+/gm, '')
+            .replace(/^\s*[-*+]\s+/gm, '')
+            .replace(/^\s*\d+\.\s+/gm, '')
+            .replace(/`([^`]+)`/g, '$1')
+            .replace(/\*\*([^*]+)\*\*/g, '$1')
+            .replace(/__([^_]+)__/g, '$1')
+            .replace(/\*([^*\n]+)\*/g, '$1')
+            .replace(/_([^_\n]+)_/g, '$1');
+        return next.trim();
+    }
+
     private normalizeTextForDocumentEol(text: string, document: vscode.TextDocument): string {
         const eol = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
         return text.replace(/\r?\n/g, eol);
@@ -1525,6 +1550,52 @@ export class ConversationOrchestrator {
             return undefined;
         }
         return match[1].trim();
+    }
+
+    private buildSelectionDirective(snapshot: SelectionSnapshot): string {
+        if (this.isPlainTextTarget(snapshot)) {
+            if (snapshot.selectedText.length > 0) {
+                return 'Selection edit directive: transform only the selected plain text. Return only plain text with no markdown formatting, headings, bullet markers, or code fences.';
+            }
+            return 'Editor insert directive: generate plain text to insert at cursor. Return only plain text with no markdown formatting, headings, bullet markers, or code fences.';
+        }
+        if (snapshot.selectedText.length > 0) {
+            return `Selection edit directive: transform only the selected text in ${snapshot.languageId}. Return only replacement text with no extra commentary, headers, or code fences.`;
+        }
+        return `Editor insert directive: generate ${snapshot.languageId} content to insert at cursor. Return only the insertable code/text with no extra commentary, headers, or code fences.`;
+    }
+
+    private describeEditorTarget(document: vscode.TextDocument): string {
+        if (document.uri.scheme === 'vscode-notebook-cell') {
+            const notebookEditor = vscode.window.activeNotebookEditor;
+            if (notebookEditor) {
+                const notebookPath = this.workspaceRelative(notebookEditor.notebook.uri.fsPath);
+                const cellIndex = notebookEditor.notebook.getCells().findIndex(
+                    (cell) => cell.document.uri.toString() === document.uri.toString()
+                );
+                if (cellIndex >= 0) {
+                    return `${notebookPath} [cell ${cellIndex + 1} ${document.languageId}]`;
+                }
+                return `${notebookPath} [cell ${document.languageId}]`;
+            }
+            return `${path.basename(document.uri.path)} [cell ${document.languageId}]`;
+        }
+        if (document.uri.scheme === 'file') {
+            return this.workspaceRelative(document.uri.fsPath);
+        }
+        return document.uri.toString(true);
+    }
+
+    private toDocumentUri(rawUri: string): vscode.Uri {
+        if (
+            rawUri.startsWith('file:') ||
+            rawUri.startsWith('vscode-notebook-cell:') ||
+            rawUri.startsWith('untitled:') ||
+            rawUri.includes('://')
+        ) {
+            return vscode.Uri.parse(rawUri, true);
+        }
+        return vscode.Uri.file(rawUri);
     }
 
     private workspaceRelative(filePath: string): string {
