@@ -118,7 +118,12 @@ function summarizeClientRequest(request: ClientRequest): Record<string, unknown>
         case 'set_context_policy':
             return { contextPolicy: request.contextPolicy };
         case 'set_context_scope':
-            return request.contextScope;
+            return {
+                useSelection: request.contextScope.useSelection,
+                useActiveFile: request.contextScope.useActiveFile,
+                useOpenFiles: request.contextScope.useOpenFiles,
+                useProjectMap: request.contextScope.useProjectMap
+            };
         case 'session_rename':
             return {
                 sessionId: request.sessionId,
