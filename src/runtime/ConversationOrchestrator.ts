@@ -6,11 +6,14 @@ import {
     AssistantMode,
     AttachmentMeta,
     ClientRequest,
+    ContextPolicy,
+    ContextScope,
     ModelCapability,
     ServerEvent,
     SessionRecord
 } from '../types/protocol';
 import { ContextEngine } from './ContextEngine';
+import { debugError, debugLog } from './DebugLogger';
 import { createId } from './id';
 import { ModelService } from './ModelService';
 import { SessionStore } from './SessionStore';
@@ -22,9 +25,33 @@ interface PendingContinuation {
     turnId: string;
     mode: AssistantMode;
     model: string;
+    temperature: number;
     messages: BaseMessage[];
     assistantAccumulated: string;
     toolCallId: string;
+}
+
+interface SelectionSnapshot {
+    sessionId: string;
+    turnId: string;
+    uri: string;
+    filePath: string;
+    start: vscode.Position;
+    end: vscode.Position;
+    startOffset: number;
+    selectedText: string;
+    rangeLabel: string;
+}
+
+interface SelectionUndoState {
+    sessionId: string;
+    turnId: string;
+    uri: string;
+    filePath: string;
+    rangeLabel: string;
+    anchorOffset: number;
+    beforeText: string;
+    afterText: string;
 }
 
 type EmitFn = (event: ServerEvent) => void;
@@ -35,6 +62,9 @@ export class ConversationOrchestrator {
     private readonly contextEngine: ContextEngine;
     private readonly toolRuntime: ToolRuntime;
     private readonly pendingContinuations = new Map<string, PendingContinuation>();
+    private readonly selectionSnapshots = new Map<string, SelectionSnapshot>();
+    private readonly pendingSelectionReplace = new Map<string, { sessionId: string; turnId: string; text: string }>();
+    private readonly selectionUndoState = new Map<string, SelectionUndoState>();
     private activeSessionId = '';
 
     constructor(
@@ -50,9 +80,19 @@ export class ConversationOrchestrator {
     public async initialize(): Promise<void> {
         const sessions = await this.sessionStore.listSessions();
         const model = await this.resolveAvailableModel(this.modelService.getConfiguredModel());
+        debugLog('Orchestrator', 'Initialize called', {
+            existingSessions: sessions.length,
+            preferredModel: this.modelService.getConfiguredModel(),
+            resolvedModel: model
+        });
         if (sessions.length === 0) {
             const created = await this.sessionStore.createSession(model, this.defaultMode());
             this.activeSessionId = created.id;
+            debugLog('Orchestrator', 'Created initial session', {
+                sessionId: created.id,
+                mode: created.mode,
+                model: created.model
+            });
             return;
         }
         const active = await this.sessionStore.getActiveSessionId();
@@ -60,9 +100,11 @@ export class ConversationOrchestrator {
             ? active
             : sessions[0].id;
         await this.sessionStore.setActiveSessionId(this.activeSessionId);
+        debugLog('Orchestrator', 'Initialization complete', { activeSessionId: this.activeSessionId });
     }
 
     public async handleClientRequest(request: ClientRequest): Promise<void> {
+        debugLog('Orchestrator', `Handling request ${request.type}`);
         switch (request.type) {
             case 'bootstrap':
                 await this.emitBootstrap();
@@ -83,6 +125,35 @@ export class ConversationOrchestrator {
                 }
                 await this.emitModels();
                 return;
+            case 'set_temperature':
+                await this.modelService.setConfiguredTemperature(request.temperature);
+                if (this.activeSessionId) {
+                    const updated = await this.sessionStore.setSessionTemperature(
+                        this.activeSessionId,
+                        this.clampTemperature(request.temperature)
+                    );
+                    if (updated) {
+                        this.emit({ type: 'session_updated', session: updated, activeSessionId: this.activeSessionId });
+                    }
+                }
+                this.emit({ type: 'temperature_updated', temperature: this.clampTemperature(request.temperature) });
+                return;
+            case 'set_context_policy':
+                if (this.activeSessionId) {
+                    const updated = await this.sessionStore.setSessionContextPolicy(this.activeSessionId, request.contextPolicy);
+                    if (updated) {
+                        this.emit({ type: 'session_updated', session: updated, activeSessionId: this.activeSessionId });
+                    }
+                }
+                return;
+            case 'set_context_scope':
+                if (this.activeSessionId) {
+                    const updated = await this.sessionStore.setSessionContextScope(this.activeSessionId, request.contextScope);
+                    if (updated) {
+                        this.emit({ type: 'session_updated', session: updated, activeSessionId: this.activeSessionId });
+                    }
+                }
+                return;
             case 'refresh_models':
                 await this.emitModels();
                 return;
@@ -94,6 +165,12 @@ export class ConversationOrchestrator {
                 return;
             case 'approve_action':
                 await this.handleApproval(request.sessionId, request.actionId, request.approved);
+                return;
+            case 'apply_selection_replace':
+                await this.handleApplySelectionReplace(request.sessionId, request.turnId);
+                return;
+            case 'undo_selection_replace':
+                await this.handleUndoSelectionReplace(request.sessionId, request.turnId);
                 return;
             case 'session_create':
                 await this.handleCreateSession(request.mode ?? this.defaultMode());
@@ -168,6 +245,7 @@ export class ConversationOrchestrator {
     }
 
     private async handleDeleteSession(sessionId: string): Promise<void> {
+        this.clearSelectionStateForSession(sessionId);
         await this.sessionStore.deleteSession(sessionId);
         if (this.activeSessionId === sessionId) {
             const sessions = await this.sessionStore.listSessions();
@@ -231,14 +309,32 @@ export class ConversationOrchestrator {
 
         const mode = request.mode ?? session.mode;
         const requestedModel = request.model ?? session.model ?? this.modelService.getConfiguredModel();
+        const temperature = this.clampTemperature(request.temperature ?? session.temperature ?? this.modelService.getConfiguredTemperature());
+        const contextPolicy = request.contextPolicy ?? session.contextPolicy ?? this.defaultContextPolicy();
+        const contextScope = request.contextScope ?? session.contextScope ?? this.defaultContextScope();
         const models = await this.modelService.listModels();
         const model = await this.resolveAvailableModel(requestedModel, models);
         const turnId = createId('turn');
+        debugLog('Orchestrator', 'Turn requested', {
+            sessionId: session.id,
+            turnId,
+            mode,
+            requestedModel,
+            resolvedModel: model,
+            temperature,
+            contextPolicy,
+            contextScope,
+            textLength: request.text.length,
+            attachments: session.attachments.length
+        });
 
         let nextSession = await this.sessionStore.setSessionModeAndModel(session.id, mode, model);
         if (!nextSession) {
             nextSession = session;
         }
+        nextSession = await this.sessionStore.setSessionTemperature(session.id, temperature) ?? nextSession;
+        nextSession = await this.sessionStore.setSessionContextPolicy(session.id, contextPolicy) ?? nextSession;
+        nextSession = await this.sessionStore.setSessionContextScope(session.id, contextScope) ?? nextSession;
 
         nextSession = await this.sessionStore.appendMessage(session.id, {
             role: 'user',
@@ -255,6 +351,25 @@ export class ConversationOrchestrator {
 
         this.emit({ type: 'session_updated', session: nextSession, activeSessionId: this.activeSessionId });
         this.emit({ type: 'turn_started', sessionId: nextSession.id, turnId, mode });
+        const selectionSnapshot = this.captureSelectionSnapshot(nextSession.id, turnId);
+        if (selectionSnapshot) {
+            this.selectionSnapshots.set(this.selectionKey(nextSession.id, turnId), selectionSnapshot);
+            debugLog('Orchestrator', 'Captured selection snapshot', {
+                sessionId: nextSession.id,
+                turnId,
+                filePath: selectionSnapshot.filePath,
+                range: selectionSnapshot.rangeLabel,
+                chars: selectionSnapshot.selectedText.length
+            });
+            this.emit({
+                type: 'selection_context',
+                sessionId: nextSession.id,
+                turnId,
+                filePath: selectionSnapshot.filePath,
+                range: selectionSnapshot.rangeLabel,
+                chars: selectionSnapshot.selectedText.length
+            });
+        }
 
         if (model !== requestedModel) {
             this.emit({
@@ -277,6 +392,14 @@ export class ConversationOrchestrator {
             });
         }
 
+        this.emit({
+            type: 'trace_stream',
+            sessionId: nextSession.id,
+            turnId,
+            level: 'thinking',
+            text: `Mode: ${mode} | Model: ${model} | Temperature: ${temperature.toFixed(1)}`
+        });
+
         if (mode === 'plan') {
             await this.emitPlanScaffold(nextSession.id, turnId, request.text);
         }
@@ -285,19 +408,56 @@ export class ConversationOrchestrator {
             type: 'thinking',
             status: 'running',
             title: 'Analyzing request',
-            detail: `Mode: ${mode}. Preparing project-aware context.`
+            detail: `Mode: ${mode}. Preparing context bundle.`
         });
 
         try {
-            const context = await this.contextEngine.buildContext(request.text, mode, nextSession.attachments);
+            const context = await this.contextEngine.buildContext(
+                request.text,
+                nextSession.attachments,
+                {
+                    mode,
+                    policy: contextPolicy,
+                    scope: contextScope
+                }
+            );
             await this.upsertTurnPhase(nextSession.id, turnId, 'analyzing_request', {
                 type: 'thinking',
                 status: 'success',
                 title: 'Analyzing request',
-                detail: `Prepared project-aware context with ${context.citations.length} source reference(s).`
+                detail: `Prepared context with ${context.citations.length} source reference(s).`
+            });
+            this.emit({
+                type: 'context_used',
+                sessionId: nextSession.id,
+                turnId,
+                scopes: context.scopesUsed,
+                citations: context.citations
+            });
+            this.emit({
+                type: 'trace_stream',
+                sessionId: nextSession.id,
+                turnId,
+                level: 'thinking',
+                text: `Context scopes: ${context.scopesUsed.length > 0 ? context.scopesUsed.join(', ') : 'None'}`
+            });
+            debugLog('Orchestrator', 'Context prepared', {
+                sessionId: nextSession.id,
+                turnId,
+                scopesUsed: context.scopesUsed,
+                citations: context.citations.length,
+                contextLength: context.text.length
             });
 
             const history = nextSession.messages.slice(-16);
+            const imageAttachments = nextSession.attachments.filter((attachment) => attachment.kind === 'image' && !!attachment.imageBase64);
+            debugLog('Orchestrator', 'Composing model messages', {
+                sessionId: nextSession.id,
+                turnId,
+                historyMessages: history.length,
+                imageAttachments: imageAttachments.length
+            });
+
             const messages: BaseMessage[] = [
                 new SystemMessage(this.systemPrompt(mode, model)),
                 ...history.map((message) => (
@@ -305,11 +465,27 @@ export class ConversationOrchestrator {
                         ? new AIMessage(message.content)
                         : new HumanMessage(message.content)
                 )),
-                new HumanMessage(
-                    `${request.text}\n\n` +
-                    `Use this context bundle when relevant:\n${context.text}\n\n` +
-                    `Citations:\n- ${context.citations.join('\n- ')}`
-                )
+                imageAttachments.length > 0
+                    ? new HumanMessage({
+                        content: [
+                            {
+                                type: 'text',
+                                text:
+                                    `${request.text}\n\n` +
+                                    `Use this context bundle when relevant:\n${context.text}\n\n` +
+                                    `Citations:\n- ${context.citations.join('\n- ')}`
+                            },
+                            ...imageAttachments.map((attachment) => ({
+                                type: 'image_url',
+                                image_url: `data:${attachment.mimeType ?? 'image/png'};base64,${attachment.imageBase64}`
+                            }))
+                        ] as any
+                    } as any)
+                    : new HumanMessage(
+                        `${request.text}\n\n` +
+                        `Use this context bundle when relevant:\n${context.text}\n\n` +
+                        `Citations:\n- ${context.citations.join('\n- ')}`
+                    )
             ];
 
             await this.runModelLoop({
@@ -317,12 +493,17 @@ export class ConversationOrchestrator {
                 turnId,
                 mode,
                 model,
+                temperature,
                 messages,
                 assistantAccumulated: '',
                 retries: 0
             });
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
+            debugError('Orchestrator', 'Context preparation failed', error, {
+                sessionId: nextSession.id,
+                turnId
+            });
             await this.upsertTurnPhase(nextSession.id, turnId, 'analyzing_request', {
                 type: 'thinking',
                 status: 'error',
@@ -338,6 +519,7 @@ export class ConversationOrchestrator {
         turnId: string;
         mode: AssistantMode;
         model: string;
+        temperature: number;
         messages: BaseMessage[];
         assistantAccumulated: string;
         retries: number;
@@ -346,6 +528,16 @@ export class ConversationOrchestrator {
             const capabilities = this.modelService.withCapabilities(state.model);
             const allowTools = state.mode !== 'ask' && capabilities.toolCalling;
             const toolSchemas = this.toolRuntime.getToolSchemas(state.mode);
+            debugLog('Orchestrator', 'Running model loop', {
+                sessionId: state.sessionId,
+                turnId: state.turnId,
+                mode: state.mode,
+                model: state.model,
+                temperature: state.temperature,
+                allowTools,
+                toolSchemaCount: toolSchemas.length,
+                retries: state.retries
+            });
 
             if (!capabilities.toolCalling && state.mode === 'agent') {
                 this.emit({
@@ -363,7 +555,7 @@ export class ConversationOrchestrator {
                 });
             }
 
-            let chatModel: unknown = this.modelService.createChatModel(state.model);
+            let chatModel: unknown = this.modelService.createChatModel(state.model, state.temperature);
             if (allowTools && toolSchemas.length > 0) {
                 chatModel = (chatModel as { bindTools: (schemas: unknown[]) => unknown }).bindTools(toolSchemas);
             }
@@ -372,6 +564,8 @@ export class ConversationOrchestrator {
             let fullResponse = '';
             const toolCalls: Array<{ id: string; name: string; args: unknown }> = [];
             let insideThink = false;
+            let streamedChars = 0;
+            let streamedChunks = 0;
 
             for await (const rawChunk of stream) {
                 const chunk = rawChunk as { content?: unknown; tool_calls?: Array<{ id?: string; name?: string; args?: unknown }> };
@@ -382,6 +576,13 @@ export class ConversationOrchestrator {
                         insideThink = true;
                         output = output.substring(0, output.indexOf('<think>'));
                         this.emit({ type: 'thinking_summary', sessionId: state.sessionId, turnId: state.turnId, text: 'Model is reasoning about next actions.' });
+                        this.emit({
+                            type: 'trace_stream',
+                            sessionId: state.sessionId,
+                            turnId: state.turnId,
+                            level: 'thinking',
+                            text: 'Model is reasoning about next actions.'
+                        });
                     }
                     if (insideThink) {
                         if (delta.includes('</think>')) {
@@ -394,6 +595,8 @@ export class ConversationOrchestrator {
                     output = output.replace(/<\/?think>/g, '');
                     if (output.length > 0) {
                         fullResponse += output;
+                        streamedChunks += 1;
+                        streamedChars += output.length;
                         this.emit({
                             type: 'token_stream',
                             sessionId: state.sessionId,
@@ -415,6 +618,13 @@ export class ConversationOrchestrator {
                     }
                 }
             }
+            debugLog('Orchestrator', 'Model stream complete', {
+                sessionId: state.sessionId,
+                turnId: state.turnId,
+                streamedChunks,
+                streamedChars,
+                toolCalls: toolCalls.map((call) => call.name)
+            });
 
             const cleanedResponse = this.stripThinkBlocks(fullResponse).trim();
             const accumulated = [state.assistantAccumulated, cleanedResponse].filter((entry) => entry.length > 0).join('\n');
@@ -425,7 +635,7 @@ export class ConversationOrchestrator {
             const nextMessages = [...state.messages, aiMessage];
 
             if (toolCalls.length === 0 || !allowTools) {
-                await this.finishTurn(state.sessionId, state.turnId, accumulated);
+                await this.finishTurn(state.sessionId, state.turnId, accumulated, state.mode);
                 return;
             }
 
@@ -434,6 +644,13 @@ export class ConversationOrchestrator {
                 sessionId: state.sessionId,
                 turnId: state.turnId,
                 status: 'start',
+                text: `Executing ${toolCalls.length} tool call(s).`
+            });
+            this.emit({
+                type: 'trace_stream',
+                sessionId: state.sessionId,
+                turnId: state.turnId,
+                level: 'tool',
                 text: `Executing ${toolCalls.length} tool call(s).`
             });
 
@@ -447,12 +664,25 @@ export class ConversationOrchestrator {
 
             const workingMessages = [...nextMessages];
             for (const toolCall of toolCalls) {
+                debugLog('Orchestrator', 'Executing model-requested tool', {
+                    sessionId: state.sessionId,
+                    turnId: state.turnId,
+                    toolName: toolCall.name,
+                    toolCallId: toolCall.id
+                });
                 this.emit({
                     type: 'tool_event',
                     sessionId: state.sessionId,
                     turnId: state.turnId,
                     toolName: toolCall.name,
                     status: 'start'
+                });
+                this.emit({
+                    type: 'trace_stream',
+                    sessionId: state.sessionId,
+                    turnId: state.turnId,
+                    level: 'tool',
+                    text: `Tool start: ${toolCall.name}`
                 });
                 const execution = await this.toolRuntime.executeToolCall(
                     state.sessionId,
@@ -462,6 +692,12 @@ export class ConversationOrchestrator {
                 );
 
                 if (execution.kind === 'completed') {
+                    debugLog('Orchestrator', 'Tool execution completed', {
+                        sessionId: state.sessionId,
+                        turnId: state.turnId,
+                        toolName: toolCall.name,
+                        outputLength: execution.output.length
+                    });
                     workingMessages.push(new ToolMessage({
                         tool_call_id: toolCall.id,
                         content: execution.output
@@ -473,6 +709,13 @@ export class ConversationOrchestrator {
                         toolName: toolCall.name,
                         status: 'output',
                         text: execution.output.slice(0, 5000)
+                    });
+                    this.emit({
+                        type: 'trace_stream',
+                        sessionId: state.sessionId,
+                        turnId: state.turnId,
+                        level: 'tool',
+                        text: `Tool output (${toolCall.name}): ${execution.output.slice(0, 220)}`
                     });
                     this.emit({
                         type: 'tool_event',
@@ -497,9 +740,16 @@ export class ConversationOrchestrator {
                     turnId: state.turnId,
                     mode: state.mode,
                     model: state.model,
+                    temperature: state.temperature,
                     messages: workingMessages,
                     assistantAccumulated: accumulated,
                     toolCallId: execution.action.toolCallId
+                });
+                debugLog('Orchestrator', 'Tool execution requires approval', {
+                    sessionId: state.sessionId,
+                    turnId: state.turnId,
+                    actionId: execution.action.id,
+                    actionType: execution.action.type
                 });
 
                 await this.emitApprovalEvents(state.sessionId, state.turnId, execution.action);
@@ -513,6 +763,13 @@ export class ConversationOrchestrator {
                 status: 'end',
                 text: 'Tool execution complete. Synthesizing response.'
             });
+            this.emit({
+                type: 'trace_stream',
+                sessionId: state.sessionId,
+                turnId: state.turnId,
+                level: 'tool',
+                text: 'Tool execution complete. Synthesizing response.'
+            });
 
             await this.runModelLoop({
                 ...state,
@@ -522,6 +779,12 @@ export class ConversationOrchestrator {
             });
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
+            debugError('Orchestrator', 'Model loop failed', error, {
+                sessionId: state.sessionId,
+                turnId: state.turnId,
+                model: state.model,
+                retries: state.retries
+            });
             if (this.isModelNotFoundError(message) && state.retries < 1) {
                 const fallback = await this.resolveAvailableModel(this.modelService.getConfiguredModel());
                 if (fallback !== state.model) {
@@ -541,6 +804,7 @@ export class ConversationOrchestrator {
                     await this.runModelLoop({
                         ...state,
                         model: fallback,
+                        temperature: state.temperature,
                         retries: state.retries + 1
                     });
                     return;
@@ -555,11 +819,18 @@ export class ConversationOrchestrator {
         }
     }
 
-    private async finishTurn(sessionId: string, turnId: string, assistantContent: string): Promise<void> {
+    private async finishTurn(sessionId: string, turnId: string, assistantContent: string, mode: AssistantMode): Promise<void> {
+        const responseText = assistantContent.length > 0 ? assistantContent : 'Done.';
+        debugLog('Orchestrator', 'Finishing turn', {
+            sessionId,
+            turnId,
+            mode,
+            responseLength: responseText.length
+        });
         await this.sessionStore.closeRunningTimelineForTurn(sessionId, turnId, 'success');
         let nextSession = await this.sessionStore.appendMessage(sessionId, {
             role: 'assistant',
-            content: assistantContent.length > 0 ? assistantContent : 'Done.'
+            content: responseText
         });
         if (!nextSession) {
             return;
@@ -577,10 +848,238 @@ export class ConversationOrchestrator {
             session: nextSession,
             activeSessionId: this.activeSessionId
         });
+
+        await this.handleSelectionReplacementAfterTurn(sessionId, turnId, mode, responseText);
         this.emit({ type: 'turn_completed', sessionId, turnId });
     }
 
+    private async handleSelectionReplacementAfterTurn(
+        sessionId: string,
+        turnId: string,
+        mode: AssistantMode,
+        responseText: string
+    ): Promise<void> {
+        const key = this.selectionKey(sessionId, turnId);
+        const snapshot = this.selectionSnapshots.get(key);
+        debugLog('Orchestrator', 'Evaluating post-turn selection replacement', {
+            sessionId,
+            turnId,
+            mode,
+            hasSnapshot: !!snapshot,
+            responseLength: responseText.length
+        });
+        if (!snapshot || responseText.trim().length === 0) {
+            return;
+        }
+
+        if (mode === 'agent') {
+            await this.applySelectionReplacement(sessionId, turnId, responseText, 'agent_auto');
+            return;
+        }
+
+        if (mode === 'ask') {
+            this.pendingSelectionReplace.set(key, { sessionId, turnId, text: responseText });
+            debugLog('Orchestrator', 'Queued ask-mode selection replacement approval', {
+                sessionId,
+                turnId,
+                filePath: snapshot.filePath,
+                range: snapshot.rangeLabel
+            });
+            this.emit({
+                type: 'selection_replace_ready',
+                sessionId,
+                turnId,
+                filePath: snapshot.filePath,
+                range: snapshot.rangeLabel
+            });
+            return;
+        }
+
+        this.selectionSnapshots.delete(key);
+    }
+
+    private async handleApplySelectionReplace(sessionId: string, turnId: string): Promise<void> {
+        const key = this.selectionKey(sessionId, turnId);
+        const pending = this.pendingSelectionReplace.get(key);
+        debugLog('Orchestrator', 'Apply selection replacement requested', {
+            sessionId,
+            turnId,
+            pending: !!pending
+        });
+        if (!pending) {
+            this.emit({
+                type: 'selection_replace_failed',
+                sessionId,
+                turnId,
+                message: 'No pending selection replacement found for this turn.'
+            });
+            return;
+        }
+        await this.applySelectionReplacement(sessionId, turnId, pending.text, 'ask_manual');
+    }
+
+    private async handleUndoSelectionReplace(sessionId: string, turnId: string): Promise<void> {
+        const key = this.selectionKey(sessionId, turnId);
+        const state = this.selectionUndoState.get(key);
+        debugLog('Orchestrator', 'Undo selection replacement requested', {
+            sessionId,
+            turnId,
+            hasUndoState: !!state
+        });
+        if (!state) {
+            this.emit({
+                type: 'selection_replace_failed',
+                sessionId,
+                turnId,
+                message: 'Nothing to undo for this turn.'
+            });
+            return;
+        }
+
+        try {
+            const document = await vscode.workspace.openTextDocument(vscode.Uri.file(state.uri));
+            const editor = await vscode.window.showTextDocument(document, { preview: false, preserveFocus: true });
+            const targetRange = this.resolveUndoRange(document, state);
+            if (!targetRange) {
+                this.emit({
+                    type: 'selection_replace_failed',
+                    sessionId,
+                    turnId,
+                    message: 'Unable to locate the generated text to undo. The file may have changed.'
+                });
+                return;
+            }
+            const applied = await editor.edit((editBuilder) => {
+                editBuilder.replace(targetRange, state.beforeText);
+            }, { undoStopBefore: true, undoStopAfter: true });
+            if (!applied) {
+                this.emit({
+                    type: 'selection_replace_failed',
+                    sessionId,
+                    turnId,
+                    message: 'VS Code rejected the undo edit. Try editor undo (Ctrl+Z).'
+                });
+                return;
+            }
+            this.selectionUndoState.delete(key);
+            debugLog('Orchestrator', 'Selection replacement undone', {
+                sessionId,
+                turnId,
+                filePath: state.filePath
+            });
+            this.emit({
+                type: 'selection_undone',
+                sessionId,
+                turnId,
+                filePath: state.filePath
+            });
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            debugError('Orchestrator', 'Undo selection replacement failed', error, {
+                sessionId,
+                turnId
+            });
+            this.emit({
+                type: 'selection_replace_failed',
+                sessionId,
+                turnId,
+                message
+            });
+        }
+    }
+
+    private async applySelectionReplacement(
+        sessionId: string,
+        turnId: string,
+        replacementText: string,
+        mode: 'agent_auto' | 'ask_manual'
+    ): Promise<void> {
+        const key = this.selectionKey(sessionId, turnId);
+        const emitFailure = (message: string) => {
+            debugLog('Orchestrator', 'Selection replacement failed', {
+                sessionId,
+                turnId,
+                mode,
+                message
+            });
+            this.emit({
+                type: 'selection_replace_failed',
+                sessionId,
+                turnId,
+                message
+            });
+            if (mode === 'agent_auto') {
+                this.selectionSnapshots.delete(key);
+                this.pendingSelectionReplace.delete(key);
+            }
+        };
+        const snapshot = this.selectionSnapshots.get(key);
+        if (!snapshot) {
+            emitFailure('No selection snapshot found for this turn.');
+            return;
+        }
+
+        try {
+            const document = await vscode.workspace.openTextDocument(vscode.Uri.file(snapshot.uri));
+            const editor = await vscode.window.showTextDocument(document, { preview: false, preserveFocus: true });
+            const targetRange = this.resolveSelectionRange(document, snapshot);
+            if (!targetRange) {
+                emitFailure('Original selection no longer matches the document. Re-select text and retry.');
+                return;
+            }
+
+            const beforeText = document.getText(targetRange);
+            const anchorOffset = document.offsetAt(targetRange.start);
+            const applied = await editor.edit((editBuilder) => {
+                editBuilder.replace(targetRange, replacementText);
+            }, { undoStopBefore: true, undoStopAfter: true });
+
+            if (!applied) {
+                emitFailure('VS Code rejected the replacement edit.');
+                return;
+            }
+
+            this.pendingSelectionReplace.delete(key);
+            this.selectionSnapshots.delete(key);
+            this.selectionUndoState.set(key, {
+                sessionId,
+                turnId,
+                uri: snapshot.uri,
+                filePath: snapshot.filePath,
+                rangeLabel: snapshot.rangeLabel,
+                anchorOffset,
+                beforeText,
+                afterText: replacementText
+            });
+            debugLog('Orchestrator', 'Selection replacement applied', {
+                sessionId,
+                turnId,
+                filePath: snapshot.filePath,
+                range: snapshot.rangeLabel,
+                mode,
+                replacementLength: replacementText.length
+            });
+            this.emit({
+                type: 'selection_replaced',
+                sessionId,
+                turnId,
+                filePath: snapshot.filePath,
+                range: snapshot.rangeLabel,
+                mode
+            });
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            debugError('Orchestrator', 'Selection replacement threw error', error, {
+                sessionId,
+                turnId,
+                mode
+            });
+            emitFailure(message);
+        }
+    }
+
     private async handleApproval(sessionId: string, actionId: string, approved: boolean): Promise<void> {
+        debugLog('Orchestrator', 'Approval decision received', { sessionId, actionId, approved });
         const continuation = this.pendingContinuations.get(actionId);
         if (!continuation) {
             this.emit({
@@ -626,12 +1125,18 @@ export class ConversationOrchestrator {
         }
 
         this.pendingContinuations.delete(actionId);
+        debugLog('Orchestrator', 'Resuming model loop after approval', {
+            sessionId: continuation.sessionId,
+            turnId: continuation.turnId,
+            approved
+        });
 
         await this.runModelLoop({
             sessionId: continuation.sessionId,
             turnId: continuation.turnId,
             mode: continuation.mode,
             model: continuation.model,
+            temperature: continuation.temperature,
             messages: nextMessages,
             assistantAccumulated: continuation.assistantAccumulated,
             retries: 0
@@ -682,6 +1187,13 @@ export class ConversationOrchestrator {
                 text: step,
                 step: index + 1
             });
+            this.emit({
+                type: 'trace_stream',
+                sessionId,
+                turnId,
+                level: 'plan',
+                text: `Plan step ${index + 1}: ${step}`
+            });
             await this.pushTimeline(sessionId, {
                 type: 'plan_step',
                 status: 'info',
@@ -709,6 +1221,125 @@ export class ConversationOrchestrator {
             basePrompt.push('When commands are needed, call run_command and include a short summary.');
         }
         return basePrompt.join(' ');
+    }
+
+    private captureSelectionSnapshot(sessionId: string, turnId: string): SelectionSnapshot | undefined {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.selection.isEmpty) {
+            debugLog('Orchestrator', 'No active selection for turn', { sessionId, turnId });
+            return undefined;
+        }
+        const selectedText = editor.document.getText(editor.selection);
+        if (selectedText.length === 0) {
+            debugLog('Orchestrator', 'Selection snapshot skipped due to empty text', { sessionId, turnId });
+            return undefined;
+        }
+        const start = editor.selection.start;
+        const end = editor.selection.end;
+        const startOffset = editor.document.offsetAt(start);
+        const rangeLabel = `${start.line + 1}:${start.character + 1}-${end.line + 1}:${end.character + 1}`;
+        return {
+            sessionId,
+            turnId,
+            uri: editor.document.uri.fsPath,
+            filePath: this.workspaceRelative(editor.document.uri.fsPath),
+            start,
+            end,
+            startOffset,
+            selectedText,
+            rangeLabel
+        };
+    }
+
+    private selectionKey(sessionId: string, turnId: string): string {
+        return `${sessionId}:${turnId}`;
+    }
+
+    private clearSelectionStateForSession(sessionId: string): void {
+        for (const [key, snapshot] of this.selectionSnapshots.entries()) {
+            if (snapshot.sessionId === sessionId) {
+                this.selectionSnapshots.delete(key);
+            }
+        }
+        for (const [key, pending] of this.pendingSelectionReplace.entries()) {
+            if (pending.sessionId === sessionId) {
+                this.pendingSelectionReplace.delete(key);
+            }
+        }
+        for (const [key, undoState] of this.selectionUndoState.entries()) {
+            if (undoState.sessionId === sessionId) {
+                this.selectionUndoState.delete(key);
+            }
+        }
+    }
+
+    private resolveSelectionRange(document: vscode.TextDocument, snapshot: SelectionSnapshot): vscode.Range | undefined {
+        const primary = new vscode.Range(snapshot.start, snapshot.end);
+        if (document.getText(primary) === snapshot.selectedText) {
+            return primary;
+        }
+        const closestOffset = this.findClosestMatchOffset(
+            document.getText(),
+            snapshot.selectedText,
+            snapshot.startOffset
+        );
+        if (closestOffset === -1) {
+            return undefined;
+        }
+        const start = document.positionAt(closestOffset);
+        const end = document.positionAt(closestOffset + snapshot.selectedText.length);
+        return new vscode.Range(start, end);
+    }
+
+    private resolveUndoRange(document: vscode.TextDocument, state: SelectionUndoState): vscode.Range | undefined {
+        if (state.afterText.length === 0) {
+            return undefined;
+        }
+        const content = document.getText();
+        const docLength = content.length;
+        const startOffset = Math.max(0, Math.min(state.anchorOffset, docLength));
+        const endOffset = Math.max(startOffset, Math.min(startOffset + state.afterText.length, docLength));
+        const direct = new vscode.Range(document.positionAt(startOffset), document.positionAt(endOffset));
+        if (document.getText(direct) === state.afterText) {
+            return direct;
+        }
+
+        const closestOffset = this.findClosestMatchOffset(content, state.afterText, state.anchorOffset);
+        if (closestOffset === -1) {
+            return undefined;
+        }
+        const start = document.positionAt(closestOffset);
+        const end = document.positionAt(closestOffset + state.afterText.length);
+        return new vscode.Range(start, end);
+    }
+
+    private findClosestMatchOffset(content: string, needle: string, preferredOffset: number): number {
+        if (needle.length === 0) {
+            return -1;
+        }
+        let hit = content.indexOf(needle);
+        if (hit === -1) {
+            return -1;
+        }
+        let best = hit;
+        let bestDistance = Math.abs(hit - preferredOffset);
+        while (hit !== -1) {
+            const distance = Math.abs(hit - preferredOffset);
+            if (distance < bestDistance) {
+                best = hit;
+                bestDistance = distance;
+            }
+            hit = content.indexOf(needle, hit + 1);
+        }
+        return best;
+    }
+
+    private workspaceRelative(filePath: string): string {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!workspaceRoot) {
+            return filePath;
+        }
+        return path.relative(workspaceRoot, filePath) || filePath;
     }
 
     private async ensureSession(maybeSessionId?: string): Promise<SessionRecord | undefined> {
@@ -770,13 +1401,15 @@ export class ConversationOrchestrator {
         const imageExts = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
         const isImage = imageExts.has(ext);
         const snippet = isImage ? '[Image attachment]' : this.readSnippet(filePath);
+        const imageBase64 = isImage ? this.readImageAsBase64(filePath) : undefined;
         return {
             id: createId('att'),
             name: path.basename(filePath),
             path: filePath,
             kind: isImage ? 'image' : 'file',
             mimeType: isImage ? `image/${ext.replace('.', '')}` : 'text/plain',
-            snippet
+            snippet,
+            imageBase64
         };
     }
 
@@ -808,6 +1441,11 @@ export class ConversationOrchestrator {
     }
 
     private async failTurn(sessionId: string, turnId: string, message: string): Promise<void> {
+        debugLog('Orchestrator', 'Failing turn', { sessionId, turnId, message });
+        const key = this.selectionKey(sessionId, turnId);
+        this.selectionSnapshots.delete(key);
+        this.pendingSelectionReplace.delete(key);
+        this.selectionUndoState.delete(key);
         await this.sessionStore.closeRunningTimelineForTurn(sessionId, turnId, 'error');
         let nextSession = await this.sessionStore.appendMessage(sessionId, {
             role: 'assistant',
@@ -851,6 +1489,13 @@ export class ConversationOrchestrator {
                 session: nextSession,
                 activeSessionId: this.activeSessionId
             });
+            this.emit({
+                type: 'trace_stream',
+                sessionId,
+                turnId,
+                level: 'thinking',
+                text: `${event.title}: ${event.detail ?? event.status}`
+            });
         }
     }
 
@@ -875,7 +1520,45 @@ export class ConversationOrchestrator {
         if (configured !== fallback) {
             await this.modelService.setConfiguredModel(fallback);
         }
+        debugLog('Orchestrator', 'Resolved model fallback', {
+            preferredModel,
+            configuredModel: configured,
+            fallback
+        });
         return fallback;
+    }
+
+    private readImageAsBase64(filePath: string): string | undefined {
+        try {
+            const stat = fs.statSync(filePath);
+            if (stat.size > 5 * 1024 * 1024) {
+                return undefined;
+            }
+            return fs.readFileSync(filePath).toString('base64');
+        } catch {
+            return undefined;
+        }
+    }
+
+    private defaultContextPolicy(): ContextPolicy {
+        const configured = vscode.workspace.getConfiguration('olla-chat').get<string>('contextPolicy', 'auto_light');
+        if (configured === 'manual_only' || configured === 'always_project' || configured === 'auto_light') {
+            return configured;
+        }
+        return 'auto_light';
+    }
+
+    private defaultContextScope(): ContextScope {
+        return {
+            useSelection: true,
+            useActiveFile: true,
+            useOpenFiles: false,
+            useProjectMap: false
+        };
+    }
+
+    private clampTemperature(value: number): number {
+        return Math.max(0, Math.min(2, Math.round(value * 10) / 10));
     }
 }
 

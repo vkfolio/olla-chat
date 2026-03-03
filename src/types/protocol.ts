@@ -1,4 +1,12 @@
 export type AssistantMode = 'ask' | 'plan' | 'agent';
+export type ContextPolicy = 'auto_light' | 'manual_only' | 'always_project';
+
+export interface ContextScope {
+    useSelection: boolean;
+    useActiveFile: boolean;
+    useOpenFiles: boolean;
+    useProjectMap: boolean;
+}
 
 export type ChatRole = 'user' | 'assistant' | 'system';
 
@@ -42,6 +50,7 @@ export interface AttachmentMeta {
     kind: 'file' | 'image';
     mimeType?: string;
     snippet?: string;
+    imageBase64?: string;
 }
 
 export interface ProposedPatch {
@@ -59,6 +68,9 @@ export interface SessionRecord {
     updatedAt: number;
     mode: AssistantMode;
     model: string;
+    temperature: number;
+    contextPolicy: ContextPolicy;
+    contextScope: ContextScope;
     messages: ChatMessage[];
     timeline: TimelineEvent[];
     attachments: AttachmentMeta[];
@@ -72,12 +84,26 @@ export interface ModelCapability {
 
 export type ClientRequest =
     | { type: 'bootstrap' }
-    | { type: 'send_turn'; sessionId?: string; mode: AssistantMode; model?: string; text: string }
+    | {
+        type: 'send_turn';
+        sessionId?: string;
+        mode: AssistantMode;
+        model?: string;
+        temperature?: number;
+        contextPolicy?: ContextPolicy;
+        contextScope?: ContextScope;
+        text: string;
+    }
     | { type: 'set_model'; model: string }
+    | { type: 'set_temperature'; temperature: number }
+    | { type: 'set_context_policy'; contextPolicy: ContextPolicy }
+    | { type: 'set_context_scope'; contextScope: ContextScope }
     | { type: 'refresh_models' }
     | { type: 'attach_picker'; sessionId: string }
     | { type: 'detach_attachment'; sessionId: string; attachmentId: string }
     | { type: 'approve_action'; sessionId: string; actionId: string; approved: boolean }
+    | { type: 'apply_selection_replace'; sessionId: string; turnId: string }
+    | { type: 'undo_selection_replace'; sessionId: string; turnId: string }
     | { type: 'session_create'; mode?: AssistantMode }
     | { type: 'session_switch'; sessionId: string }
     | { type: 'session_rename'; sessionId: string; title: string }
@@ -95,8 +121,11 @@ export type ServerEvent =
     | { type: 'session_updated'; session: SessionRecord; activeSessionId: string }
     | { type: 'session_deleted'; sessionId: string; activeSessionId: string }
     | { type: 'models_updated'; models: ModelCapability[]; currentModel: string }
+    | { type: 'temperature_updated'; temperature: number }
     | { type: 'turn_started'; sessionId: string; turnId: string; mode: AssistantMode }
     | { type: 'token_stream'; sessionId: string; turnId: string; delta: string }
+    | { type: 'trace_stream'; sessionId: string; turnId: string; level: 'thinking' | 'tool' | 'plan'; text: string }
+    | { type: 'context_used'; sessionId: string; turnId: string; scopes: string[]; citations: string[] }
     | { type: 'thinking_summary'; sessionId: string; turnId: string; text: string }
     | { type: 'plan_step'; sessionId: string; turnId: string; text: string; step: number }
     | { type: 'tool_event'; sessionId: string; turnId: string; toolName: string; status: 'start' | 'output' | 'end'; text?: string }
@@ -104,5 +133,17 @@ export type ServerEvent =
     | { type: 'patch_proposed'; sessionId: string; turnId: string; actionId: string; summary: string; patches: ProposedPatch[] }
     | { type: 'approval_required'; sessionId: string; turnId: string; actionId: string; summary: string; reason: string }
     | { type: 'patch_applied'; sessionId: string; turnId: string; actionId: string; changedFiles: string[] }
+    | {
+        type: 'selection_context';
+        sessionId: string;
+        turnId: string;
+        filePath: string;
+        range: string;
+        chars: number;
+    }
+    | { type: 'selection_replace_ready'; sessionId: string; turnId: string; filePath: string; range: string }
+    | { type: 'selection_replaced'; sessionId: string; turnId: string; filePath: string; range: string; mode: 'agent_auto' | 'ask_manual' }
+    | { type: 'selection_undone'; sessionId: string; turnId: string; filePath: string }
+    | { type: 'selection_replace_failed'; sessionId: string; turnId: string; message: string }
     | { type: 'turn_completed'; sessionId: string; turnId: string }
     | { type: 'error'; sessionId?: string; turnId?: string; message: string };

@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { AssistantMode, ProposedPatch } from '../types/protocol';
 import { createId } from './id';
+import { debugError, debugLog } from './DebugLogger';
 
 interface ToolSchema {
     name: string;
@@ -57,6 +58,11 @@ export class ToolRuntime {
     }
 
     public async executeToolCall(sessionId: string, toolCallId: string, toolName: string, args: unknown): Promise<ToolExecutionResult> {
+        debugLog('ToolRuntime', 'Executing tool call', {
+            sessionId,
+            toolCallId,
+            toolName
+        });
         switch (toolName) {
             case 'read_file':
                 return { kind: 'completed', output: await this.readFile(args) };
@@ -76,6 +82,7 @@ export class ToolRuntime {
     }
 
     public async resolvePendingAction(sessionId: string, actionId: string, approved: boolean): Promise<{ output: string; changedFiles: string[] }> {
+        debugLog('ToolRuntime', 'Resolving pending action', { sessionId, actionId, approved });
         const action = this.pendingActions.get(actionId);
         if (!action || action.sessionId !== sessionId) {
             return { output: `No pending action found for ID ${actionId}.`, changedFiles: [] };
@@ -294,6 +301,12 @@ export class ToolRuntime {
         };
 
         this.pendingActions.set(action.id, action);
+        debugLog('ToolRuntime', 'Patch proposal queued', {
+            sessionId,
+            actionId: action.id,
+            path: patch.path,
+            summary
+        });
         return {
             kind: 'needs_approval',
             action,
@@ -317,6 +330,11 @@ export class ToolRuntime {
         };
 
         this.pendingActions.set(action.id, action);
+        debugLog('ToolRuntime', 'Command proposal queued', {
+            sessionId,
+            actionId: action.id,
+            command
+        });
         return {
             kind: 'needs_approval',
             action,
@@ -340,6 +358,10 @@ export class ToolRuntime {
             fs.writeFileSync(fullPath, next, 'utf-8');
             changedFiles.push(patchEntry.path);
         }
+        debugLog('ToolRuntime', 'Patch action applied', {
+            actionId: action.id,
+            changedFiles
+        });
         return {
             output: `Applied ${patches.length} patch(es).`,
             changedFiles
@@ -348,12 +370,19 @@ export class ToolRuntime {
 
     private async runCommand(command: string): Promise<string> {
         const workspaceRoot = this.getWorkspaceRoot();
+        debugLog('ToolRuntime', 'Running command', { command, workspaceRoot });
         return new Promise((resolve) => {
             cp.exec(command, { cwd: workspaceRoot, timeout: 60_000 }, (error, stdout, stderr) => {
                 if (error) {
+                    debugError('ToolRuntime', 'Command execution failed', error, { command, stderr });
                     resolve(`Command failed: ${error.message}\n${stderr}`);
                     return;
                 }
+                debugLog('ToolRuntime', 'Command execution completed', {
+                    command,
+                    stdoutLength: (stdout ?? '').length,
+                    stderrLength: (stderr ?? '').length
+                });
                 resolve((stdout || stderr || 'Command completed with no output.').slice(0, 12000));
             });
         });

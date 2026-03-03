@@ -38,6 +38,11 @@
         "command": "olla-chat.focus",
         "title": "Focus Olla Chat",
         "category": "Olla Chat"
+      },
+      {
+        "command": "olla-chat.showDebugLogs",
+        "title": "Show Debug Logs",
+        "category": "Olla Chat"
       }
     ],
     "configuration": {
@@ -52,6 +57,13 @@
           "type": "string",
           "default": "llama3",
           "description": "The model to use (requires tool calling support, like llama3 or qwen2.5)."
+        },
+        "olla-chat.temperature": {
+          "type": "number",
+          "default": 0.1,
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Sampling temperature for model generation."
         },
         "olla-chat.defaultMode": {
           "type": "string",
@@ -72,6 +84,16 @@
           ],
           "description": "Controls whether potentially risky tool actions always require approval."
         },
+        "olla-chat.contextPolicy": {
+          "type": "string",
+          "default": "auto_light",
+          "enum": [
+            "auto_light",
+            "manual_only",
+            "always_project"
+          ],
+          "description": "Controls how much repository context is included by default."
+        },
         "olla-chat.maxContextFiles": {
           "type": "number",
           "default": 80,
@@ -86,6 +108,11 @@
           "type": "number",
           "default": 30,
           "description": "Number of days to retain local workspace chat sessions."
+        },
+        "olla-chat.debugLogs": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable verbose debug logs in the 'Olla Chat Debug' output channel."
         }
       }
     }

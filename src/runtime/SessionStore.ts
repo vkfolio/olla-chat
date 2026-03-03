@@ -1,15 +1,32 @@
 import * as vscode from 'vscode';
 import { createId } from './id';
-import { AssistantMode, ChatMessage, SessionRecord, TimelineEvent, AttachmentMeta } from '../types/protocol';
+import {
+    AssistantMode,
+    ChatMessage,
+    SessionRecord,
+    TimelineEvent,
+    AttachmentMeta,
+    ContextPolicy,
+    ContextScope
+} from '../types/protocol';
 
 const SESSIONS_KEY = 'olla-chat.sessions.v2';
 const ACTIVE_SESSION_KEY = 'olla-chat.activeSessionId.v2';
+const DEFAULT_TEMPERATURE = 0.1;
+const DEFAULT_CONTEXT_POLICY: ContextPolicy = 'auto_light';
+const DEFAULT_CONTEXT_SCOPE: ContextScope = {
+    useSelection: true,
+    useActiveFile: true,
+    useOpenFiles: false,
+    useProjectMap: false
+};
 
 export class SessionStore {
     constructor(private readonly context: vscode.ExtensionContext) { }
 
     public async listSessions(): Promise<SessionRecord[]> {
-        const sessions = this.context.workspaceState.get<SessionRecord[]>(SESSIONS_KEY, []);
+        const raw = this.context.workspaceState.get<SessionRecord[]>(SESSIONS_KEY, []);
+        const sessions = raw.map((session) => this.normalizeSession(session));
         return [...sessions].sort((a, b) => b.updatedAt - a.updatedAt);
     }
 
@@ -27,6 +44,9 @@ export class SessionStore {
             updatedAt: now,
             mode,
             model,
+            temperature: DEFAULT_TEMPERATURE,
+            contextPolicy: DEFAULT_CONTEXT_POLICY,
+            contextScope: { ...DEFAULT_CONTEXT_SCOPE },
             messages: [],
             timeline: [],
             attachments: []
@@ -227,11 +247,67 @@ export class SessionStore {
         return next;
     }
 
+    public async setSessionTemperature(sessionId: string, temperature: number): Promise<SessionRecord | undefined> {
+        const session = await this.getSession(sessionId);
+        if (!session) {
+            return undefined;
+        }
+        const next: SessionRecord = {
+            ...session,
+            temperature,
+            updatedAt: Date.now()
+        };
+        await this.saveSession(next);
+        return next;
+    }
+
+    public async setSessionContextPolicy(sessionId: string, contextPolicy: ContextPolicy): Promise<SessionRecord | undefined> {
+        const session = await this.getSession(sessionId);
+        if (!session) {
+            return undefined;
+        }
+        const next: SessionRecord = {
+            ...session,
+            contextPolicy,
+            updatedAt: Date.now()
+        };
+        await this.saveSession(next);
+        return next;
+    }
+
+    public async setSessionContextScope(sessionId: string, contextScope: ContextScope): Promise<SessionRecord | undefined> {
+        const session = await this.getSession(sessionId);
+        if (!session) {
+            return undefined;
+        }
+        const next: SessionRecord = {
+            ...session,
+            contextScope: {
+                useSelection: !!contextScope.useSelection,
+                useActiveFile: !!contextScope.useActiveFile,
+                useOpenFiles: !!contextScope.useOpenFiles,
+                useProjectMap: !!contextScope.useProjectMap
+            },
+            updatedAt: Date.now()
+        };
+        await this.saveSession(next);
+        return next;
+    }
+
     public async getActiveSessionId(): Promise<string | undefined> {
         return this.context.workspaceState.get<string>(ACTIVE_SESSION_KEY);
     }
 
     public async setActiveSessionId(sessionId: string): Promise<void> {
         await this.context.workspaceState.update(ACTIVE_SESSION_KEY, sessionId);
+    }
+
+    private normalizeSession(session: SessionRecord): SessionRecord {
+        return {
+            ...session,
+            temperature: typeof session.temperature === 'number' ? session.temperature : DEFAULT_TEMPERATURE,
+            contextPolicy: session.contextPolicy ?? DEFAULT_CONTEXT_POLICY,
+            contextScope: session.contextScope ?? { ...DEFAULT_CONTEXT_SCOPE }
+        };
     }
 }
