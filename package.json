@@ -52,6 +52,40 @@
           "type": "string",
           "default": "llama3",
           "description": "The model to use (requires tool calling support, like llama3 or qwen2.5)."
+        },
+        "olla-chat.defaultMode": {
+          "type": "string",
+          "default": "ask",
+          "enum": [
+            "ask",
+            "plan",
+            "agent"
+          ],
+          "description": "Default mode for new chat sessions."
+        },
+        "olla-chat.approvalPolicy": {
+          "type": "string",
+          "default": "human_gated",
+          "enum": [
+            "human_gated",
+            "auto_safe"
+          ],
+          "description": "Controls whether potentially risky tool actions always require approval."
+        },
+        "olla-chat.maxContextFiles": {
+          "type": "number",
+          "default": 80,
+          "description": "Maximum number of workspace files sampled for context mapping."
+        },
+        "olla-chat.autoRunValidation": {
+          "type": "boolean",
+          "default": false,
+          "description": "If enabled, the agent may suggest or run validation commands after approved edits."
+        },
+        "olla-chat.sessionRetentionDays": {
+          "type": "number",
+          "default": 30,
+          "description": "Number of days to retain local workspace chat sessions."
         }
       }
     }

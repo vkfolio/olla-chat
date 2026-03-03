@@ -4,7 +4,7 @@ import { ChatWebviewProvider } from './ChatWebviewProvider';
 export function activate(context: vscode.ExtensionContext) {
     console.log('Olla Chat extension is now active!');
 
-    const provider = new ChatWebviewProvider(context.extensionUri);
+    const provider = new ChatWebviewProvider(context);
 
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider('olla-chat.sidebar.view', provider)

@@ -1,88 +1,52 @@
 import * as vscode from 'vscode';
-import { OllamaAgent } from './agent/OllamaAgent';
+import { ConversationOrchestrator } from './runtime/ConversationOrchestrator';
+import { ClientRequest, ServerEvent } from './types/protocol';
 
 export class ChatWebviewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'olla-chat.sidebar.view';
-    private _view?: vscode.WebviewView;
-    private _agent = new OllamaAgent();
+    private view?: vscode.WebviewView;
+    private readonly orchestrator: ConversationOrchestrator;
 
-    constructor(
-        private readonly _extensionUri: vscode.Uri,
-    ) { }
+    constructor(private readonly context: vscode.ExtensionContext) {
+        this.orchestrator = new ConversationOrchestrator(context, (event: ServerEvent) => {
+            this.view?.webview.postMessage(event);
+        });
+    }
 
-    public resolveWebviewView(
+    public async resolveWebviewView(
         webviewView: vscode.WebviewView,
-        context: vscode.WebviewViewResolveContext,
-        _token: vscode.CancellationToken,
-    ) {
-        this._view = webviewView;
+        _context: vscode.WebviewViewResolveContext,
+        _token: vscode.CancellationToken
+    ): Promise<void> {
+        this.view = webviewView;
 
         webviewView.webview.options = {
             enableScripts: true,
-            localResourceRoots: [
-                this._extensionUri
-            ]
+            localResourceRoots: [this.context.extensionUri]
         };
 
-        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+        webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
 
-        webviewView.webview.onDidReceiveMessage(async (data) => {
-            switch (data.type) {
-                case 'sendMessage':
-                    {
-                        // Begin streaming response from Ollama
-                        webviewView.webview.postMessage({ type: 'startStream' });
+        await this.orchestrator.initialize();
 
-                        await this._agent.sendMessage(
-                            data.value,
-                            (chunk: string) => {
-                                webviewView.webview.postMessage({ type: 'streamChunk', value: chunk });
-                            },
-                            (isThinking: boolean, statusText?: string) => {
-                                webviewView.webview.postMessage({ type: 'thinkStatus', value: isThinking, statusText: statusText });
-                            }
-                        );
-
-                        webviewView.webview.postMessage({ type: 'endStream' });
-                        break;
-                    }
-                case 'openSettings':
-                    {
-                        vscode.commands.executeCommand('workbench.action.openSettings', 'olla-chat');
-                        break;
-                    }
-                case 'setModel':
-                    {
-                        vscode.workspace.getConfiguration('olla-chat').update('ollamaModel', data.value, vscode.ConfigurationTarget.Global);
-                        vscode.window.showInformationMessage(`Olla Chat model set to: ${data.value}`);
-                        break;
-                    }
-                case 'refreshModels':
-                    {
-                        const models = await this._agent.getAvailableModels();
-                        webviewView.webview.postMessage({ type: 'initModels', value: models });
-                        break;
-                    }
+        webviewView.webview.onDidReceiveMessage(async (rawData: unknown) => {
+            const data = rawData as Partial<ClientRequest>;
+            if (!data || typeof data.type !== 'string') {
+                this.view?.webview.postMessage({ type: 'error', message: 'Invalid request payload.' } satisfies ServerEvent);
+                return;
             }
+            await this.orchestrator.handleClientRequest(data as ClientRequest);
         });
 
-        // Fetch initial models on load
-        this._agent.getAvailableModels().then(models => {
-            webviewView.webview.postMessage({ type: 'initModels', value: models });
-        });
-
-        // Push the currently selected model
-        const currentModel = vscode.workspace.getConfiguration('olla-chat').get<string>('ollamaModel', 'llama3');
-        webviewView.webview.postMessage({ type: 'currentModel', value: currentModel });
+        await this.orchestrator.handleClientRequest({ type: 'bootstrap' });
     }
 
-    private _getHtmlForWebview(webview: vscode.Webview) {
-        // Get path to React build
+    private getHtmlForWebview(webview: vscode.Webview): string {
         const scriptUri = webview.asWebviewUri(
-            vscode.Uri.joinPath(this._extensionUri, 'webview-ui', 'build', 'assets', 'index.js')
+            vscode.Uri.joinPath(this.context.extensionUri, 'webview-ui', 'build', 'assets', 'index.js')
         );
         const styleUri = webview.asWebviewUri(
-            vscode.Uri.joinPath(this._extensionUri, 'webview-ui', 'build', 'assets', 'index.css')
+            vscode.Uri.joinPath(this.context.extensionUri, 'webview-ui', 'build', 'assets', 'index.css')
         );
 
         return `<!DOCTYPE html>
@@ -90,6 +54,7 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource}; img-src ${webview.cspSource} https: data:;">
                 <link href="${styleUri}" rel="stylesheet">
                 <title>Olla Chat</title>
             </head>
