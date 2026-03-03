@@ -50,15 +50,16 @@
     "webpack-dev": "webpack --mode development --watch"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
     "@types/node": "18.x",
+    "@types/vscode": "^1.85.0",
+    "ts-loader": "^9.5.1",
     "typescript": "^5.3.3",
     "webpack": "^5.90.0",
-    "webpack-cli": "^5.1.4",
-    "ts-loader": "^9.5.1"
+    "webpack-cli": "^5.1.4"
   },
   "dependencies": {
-    "@langchain/core": "^0.3.4",
-    "@langchain/community": "^0.3.0"
+    "@langchain/community": "^0.3.59",
+    "@langchain/core": "^0.3.80",
+    "@langchain/ollama": "0.2.0"
   }
 }

@@ -10,6 +10,7 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   isThinking?: boolean;
+  statusText?: string;
 }
 
 function App() {
@@ -51,6 +52,7 @@ function App() {
             const lastMessage = newMessages[newMessages.length - 1];
             if (lastMessage && lastMessage.role === 'assistant') {
               lastMessage.isThinking = message.value;
+              lastMessage.statusText = message.statusText || 'Thinking...';
             }
             return newMessages;
           });
@@ -136,7 +138,7 @@ function App() {
               <div className="action-block">
                 <div className="action-header">
                   <Loader2 size={12} className="lucide-spin" style={{ animation: 'spin 2s linear infinite' }} />
-                  Subagent: Discover VSCode chat context — Thinking
+                  {msg.statusText || 'Thinking...'}
                 </div>
               </div>
             )}
@@ -144,7 +146,7 @@ function App() {
               <div className="action-block">
                 <div className="action-header completed">
                   <Check size={12} />
-                  Planning discovery approach
+                  Tool execution complete
                 </div>
               </div>
             )}

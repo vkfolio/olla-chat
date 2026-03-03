@@ -38,8 +38,8 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
                             (chunk: string) => {
                                 webviewView.webview.postMessage({ type: 'streamChunk', value: chunk });
                             },
-                            (isThinking: boolean) => {
-                                webviewView.webview.postMessage({ type: 'thinkStatus', value: isThinking });
+                            (isThinking: boolean, statusText?: string) => {
+                                webviewView.webview.postMessage({ type: 'thinkStatus', value: isThinking, statusText: statusText });
                             }
                         );
 
