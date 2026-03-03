@@ -1,21 +1,21 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import {
+  Attachment,
+  Bin,
   Check,
-  ChevronDown,
-  Clock3,
+  Clock,
+  ControlSlider,
   Copy,
-  FileUp,
-  Loader2,
-  MessageSquare,
+  IconoirProvider,
+  MessageText,
+  NavArrowDown,
   Plus,
-  RefreshCw,
-  SendHorizontal,
+  Refresh,
+  SendDiagonal,
   Settings,
-  SlidersHorizontal,
-  Trash2,
-  X
-} from 'lucide-react';
+  Xmark
+} from 'iconoir-react';
 import './App.css';
 
 // @ts-expect-error VS Code injects this in webviews
@@ -173,7 +173,7 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
       <div className="code-head">
         <span className="code-lang">{formatLanguageLabel(language)}</span>
         <button className={`code-copy ${copied ? 'copied' : ''}`} onClick={onCopy}>
-          {copied ? <Check size={12} /> : <Copy size={12} />}
+          {copied ? <Check width={12} height={12} /> : <Copy width={12} height={12} />}
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
@@ -797,21 +797,22 @@ function App() {
   const activeTitle = (activeSession?.title || 'New Chat').toUpperCase();
 
   return (
-    <div className="shell">
+    <IconoirProvider iconProps={{ color: 'currentColor', strokeWidth: 1.9 }}>
+      <div className="shell">
       <header className="top-toolbar">
         <div className="toolbar-title">CHAT</div>
         <div className="toolbar-actions">
           <button className="chrome-btn" onClick={() => setShowSessionsFeed((prev) => !prev)} title="Toggle sessions">
-            <Clock3 size={14} />
+            <Clock width={14} height={14} />
           </button>
           <button className="chrome-btn" onClick={onCreateSession} title="New chat">
-            <Plus size={14} />
+            <Plus width={14} height={14} />
           </button>
           <button className="chrome-btn" onClick={() => vscode.postMessage({ type: 'open_settings' })} title="Settings">
-            <Settings size={14} />
+            <Settings width={14} height={14} />
           </button>
           <button className="chrome-btn" onClick={onDeleteSession} title="Delete session">
-            <Trash2 size={14} />
+            <Bin width={14} height={14} />
           </button>
         </div>
       </header>
@@ -843,7 +844,7 @@ function App() {
 
         {!showSessionsFeed && !hasConversation && (
           <div className="empty-state">
-            <MessageSquare size={34} />
+            <MessageText width={34} height={34} />
             <h2>Build with Agent</h2>
             <p>AI responses may be inaccurate.</p>
             <div className="suggested-row">
@@ -884,9 +885,9 @@ function App() {
                   setExpandedEvents((prev) => ({ ...prev, [item.id]: !prev[item.id] }));
                 }}
               >
-                <span className="event-icon">{status === 'running' ? <Loader2 size={12} className="spin" /> : <ChevronDown size={12} />}</span>
+                <span className="event-icon">{status === 'running' ? <Refresh width={12} height={12} className="spin" /> : <NavArrowDown width={12} height={12} />}</span>
                 <span className="event-title">{title}</span>
-                {detail && (expandedEvents[item.id] ? <ChevronDown size={12} className="event-toggle open" /> : <ChevronDown size={12} className="event-toggle" />)}
+                {detail && (expandedEvents[item.id] ? <NavArrowDown width={12} height={12} className="event-toggle open" /> : <NavArrowDown width={12} height={12} className="event-toggle" />)}
               </button>
               {detail && <div className={`event-detail ${expandedEvents[item.id] ? 'open' : ''}`}>{detail}</div>}
             </div>
@@ -956,7 +957,7 @@ function App() {
         <div className="composer-panel">
           <div className="composer-meta-row">
             <button className="context-btn context-inline" onClick={onAttachContext}>
-              <FileUp size={12} />
+              <Attachment width={12} height={12} />
               Add Context...
             </button>
             <div className="attachments-row inline">
@@ -964,7 +965,7 @@ function App() {
                 <div key={attachment.id} className="attachment-chip">
                   <span>{attachment.name}</span>
                   <button onClick={() => onDetachAttachment(attachment.id)}>
-                    <X size={11} />
+                    <Xmark width={11} height={11} />
                   </button>
                 </div>
               ))}
@@ -1003,7 +1004,7 @@ function App() {
               <div className="menu-root">
                 <button className="pill-btn" onClick={() => setOpenMenu((prev) => (prev === 'mode' ? null : 'mode'))}>
                   {modeLabel}
-                  <ChevronDown size={12} className={openMenu === 'mode' ? 'chev open' : 'chev'} />
+                  <NavArrowDown width={12} height={12} className={openMenu === 'mode' ? 'chev open' : 'chev'} />
                 </button>
                 {openMenu === 'mode' && (
                   <div className="menu-panel bottom-menu">
@@ -1017,7 +1018,7 @@ function App() {
                         }}
                       >
                         <span>{entry.charAt(0).toUpperCase() + entry.slice(1)}</span>
-                        {entry === mode && <Check size={12} />}
+                        {entry === mode && <Check width={12} height={12} />}
                       </button>
                     ))}
                   </div>
@@ -1027,7 +1028,7 @@ function App() {
               <div className="menu-root">
                 <button className="pill-btn model-pill" onClick={() => setOpenMenu((prev) => (prev === 'model' ? null : 'model'))}>
                   <span>{currentModel}</span>
-                  <ChevronDown size={12} className={openMenu === 'model' ? 'chev open' : 'chev'} />
+                  <NavArrowDown width={12} height={12} className={openMenu === 'model' ? 'chev open' : 'chev'} />
                 </button>
                 {openMenu === 'model' && (
                   <div className="menu-panel bottom-menu model-menu">
@@ -1042,7 +1043,7 @@ function App() {
                         }}
                       >
                         <span>{model.name}</span>
-                        {model.name === currentModel && <Check size={12} />}
+                        {model.name === currentModel && <Check width={12} height={12} />}
                       </button>
                     ))}
                   </div>
@@ -1051,7 +1052,7 @@ function App() {
 
               <div className="menu-root">
                 <button className="pill-btn" onClick={() => setOpenMenu((prev) => (prev === 'temp' ? null : 'temp'))}>
-                  <SlidersHorizontal size={12} />
+                  <ControlSlider width={12} height={12} />
                   {temperature.toFixed(1)}
                 </button>
                 {openMenu === 'temp' && (
@@ -1084,17 +1085,18 @@ function App() {
               </div>
 
               <button className="mini-btn" onClick={() => vscode.postMessage({ type: 'refresh_models' })} title="Refresh models">
-                <RefreshCw size={12} />
+                <Refresh width={12} height={12} />
               </button>
             </div>
 
             <button className={`send send-prominent ${input.trim() ? 'active' : ''}`} onClick={sendTurn} disabled={isStreaming || !activeSessionId}>
-              <SendHorizontal size={15} />
+              <SendDiagonal width={15} height={15} />
             </button>
           </div>
         </div>
       </footer>
-    </div>
+      </div>
+    </IconoirProvider>
   );
 }
 

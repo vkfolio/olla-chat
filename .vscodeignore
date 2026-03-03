@@ -1,0 +1,9 @@
+**
+!.vscodeignore
+!package.json
+!README.md
+!CHANGELOG.md
+!LICENSE*
+!dist/**
+!webview-ui/build/**
+!media/**

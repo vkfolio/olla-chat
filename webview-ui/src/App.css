@@ -1,17 +1,40 @@
 :root {
-  --font-ui: "Segoe UI", "Inter", "SF Pro Text", system-ui, -apple-system, sans-serif;
-  --font-mono: Consolas, Monaco, "Courier New", monospace;
-  --bg-main: #080d14;
-  --bg-elev: #0d141f;
-  --line: #1a2534;
-  --line-soft: #162030;
-  --text-main: #dbe6f6;
-  --text-muted: #95a5be;
-  --text-faint: #6d7f99;
-  --accent: #3a9bff;
-  --ok: #79cb9a;
-  --warn: #ddb15f;
-  --bad: #ef8f8f;
+  --font-ui: var(--vscode-font-family, "Segoe UI", system-ui, -apple-system, sans-serif);
+  --font-mono: var(--vscode-editor-font-family, Consolas, "Courier New", monospace);
+  --bg-main: var(--vscode-sideBar-background, #111827);
+  --bg-elev: var(--vscode-editorWidget-background, var(--vscode-editor-background, #0f172a));
+  --bg-subtle: var(--vscode-input-background, var(--bg-elev));
+  --bg-hover: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.14));
+  --bg-active: var(--vscode-list-activeSelectionBackground, rgba(127, 127, 127, 0.2));
+  --line: var(--vscode-panel-border, var(--vscode-widget-border, rgba(127, 127, 127, 0.35)));
+  --line-soft: var(--vscode-widget-border, var(--line));
+  --text-main: var(--vscode-foreground, #d4d4d4);
+  --text-muted: var(--vscode-descriptionForeground, var(--vscode-editor-foreground, #a0a0a0));
+  --text-faint: var(--vscode-disabledForeground, #8a8a8a);
+  --accent: var(--vscode-focusBorder, var(--vscode-textLink-foreground, var(--text-main)));
+  --accent-soft: color-mix(in srgb, var(--accent) 18%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 42%, var(--line));
+  --ok: var(--vscode-testing-iconPassed, #89d185);
+  --warn: var(--vscode-testing-iconQueued, var(--vscode-testing-iconSkipped, #cca700));
+  --bad: var(--vscode-testing-iconFailed, #f48771);
+  --input-bg: var(--vscode-input-background, var(--bg-subtle));
+  --input-fg: var(--vscode-input-foreground, var(--text-main));
+  --input-border: var(--vscode-input-border, var(--line));
+  --button-bg: var(--vscode-button-secondaryBackground, var(--bg-subtle));
+  --button-fg: var(--vscode-button-secondaryForeground, var(--text-main));
+  --button-hover: var(--vscode-button-secondaryHoverBackground, var(--bg-hover));
+  --button-primary-bg: var(--vscode-button-background, var(--button-bg));
+  --button-primary-fg: var(--vscode-button-foreground, #ffffff);
+  --button-primary-hover: var(--vscode-button-hoverBackground, color-mix(in srgb, var(--accent) 88%, black));
+  --menu-bg: var(--vscode-menu-background, var(--bg-elev));
+  --menu-border: var(--vscode-menu-border, var(--line));
+  --menu-fg: var(--vscode-menu-foreground, var(--text-main));
+  --menu-hover: var(--vscode-menu-selectionBackground, var(--bg-hover));
+  --menu-selected-fg: var(--vscode-menu-selectionForeground, var(--text-main));
+  --code-bg: var(--vscode-textCodeBlock-background, var(--bg-subtle));
+  --scroll-thumb: var(--vscode-scrollbarSlider-background, rgba(127, 127, 127, 0.35));
+  --scroll-thumb-hover: var(--vscode-scrollbarSlider-hoverBackground, rgba(127, 127, 127, 0.52));
+  --shadow: rgba(0, 0, 0, 0.42);
 }
 
 .shell {
@@ -20,9 +43,7 @@
   flex-direction: column;
   font-family: var(--font-ui);
   color: var(--text-main);
-  background:
-    radial-gradient(circle at top right, rgba(35, 70, 120, 0.17), transparent 34%),
-    linear-gradient(180deg, #060a12 0%, var(--bg-main) 100%);
+  background: var(--bg-main);
 }
 
 .top-toolbar {
@@ -32,12 +53,12 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 8px;
-  background: #080c13;
+  background: var(--bg-main);
 }
 
 .toolbar-title {
   font-size: 11px;
-  color: #a8b6ca;
+  color: var(--text-muted);
   letter-spacing: 0.04em;
   font-weight: 600;
 }
@@ -51,7 +72,7 @@
   width: 24px;
   height: 24px;
   border: none;
-  color: #7d8da4;
+  color: var(--text-faint);
   background: transparent;
   border-radius: 4px;
   display: inline-flex;
@@ -62,7 +83,7 @@
 
 .chrome-btn:hover {
   color: var(--text-main);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-hover);
 }
 
 .session-header {
@@ -79,7 +100,7 @@
   letter-spacing: 0.04em;
   font-weight: 700;
   text-transform: uppercase;
-  color: #cfdbef;
+  color: var(--text-main);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -97,8 +118,12 @@
 }
 
 .conversation::-webkit-scrollbar-thumb {
-  background: #1a2637;
+  background: var(--scroll-thumb);
   border-radius: 6px;
+}
+
+.conversation::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
 }
 
 .sessions-feed {
@@ -108,7 +133,7 @@
 .sessions-head {
   font-size: 13px;
   letter-spacing: 0.04em;
-  color: #a7b5c7;
+  color: var(--text-muted);
   margin-bottom: 8px;
   font-weight: 600;
 }
@@ -128,18 +153,18 @@
 }
 
 .session-row:hover {
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--bg-hover);
 }
 
 .session-row.active {
-  background: rgba(58, 155, 255, 0.08);
+  background: var(--bg-active);
 }
 
 .session-dot {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: #5e6f88;
+  background: var(--text-faint);
   margin-top: 8px;
   margin-left: 3px;
 }
@@ -149,7 +174,7 @@
 }
 
 .session-name {
-  color: #d7e2f2;
+  color: var(--text-main);
   font-size: 14px;
   line-height: 1.35;
   white-space: nowrap;
@@ -168,14 +193,14 @@
 }
 
 .session-time {
-  color: #8a9ab1;
+  color: var(--text-faint);
   font-size: 12px;
   align-self: center;
 }
 
 .more-row {
   margin-top: 4px;
-  color: #91a2ba;
+  color: var(--text-faint);
   font-size: 12px;
   padding: 2px 6px;
 }
@@ -188,7 +213,7 @@
   flex-direction: column;
   text-align: center;
   gap: 6px;
-  color: #c6d1e2;
+  color: var(--text-main);
 }
 
 .empty-state h2 {
@@ -225,7 +250,7 @@
 }
 
 .suggested-title {
-  color: #72839a;
+  color: var(--text-faint);
   font-size: 11px;
   letter-spacing: 0.04em;
   margin-bottom: 7px;
@@ -238,9 +263,9 @@
 }
 
 .chip {
-  border: 1px solid #2b3748;
-  background: #111a28;
-  color: #c7d2e2;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--input-fg);
   border-radius: 6px;
   font-size: 12px;
   padding: 5px 9px;
@@ -248,7 +273,8 @@
 }
 
 .chip:hover {
-  border-color: #3b4a60;
+  border-color: var(--accent-border);
+  background: var(--button-hover);
 }
 
 .msg {
@@ -264,8 +290,8 @@
   max-width: 88%;
   border-radius: 10px;
   padding: 9px 12px;
-  background: linear-gradient(180deg, #1a3454, #13283f);
-  color: #dbe8fb;
+  background: var(--vscode-list-inactiveSelectionBackground, var(--bg-subtle));
+  color: var(--text-main);
   font-size: 13px;
   line-height: 1.45;
 }
@@ -278,7 +304,7 @@
 }
 
 .assistant-content.streaming {
-  border-left: 2px solid #355a85;
+  border-left: 2px solid var(--accent-border);
   padding-left: 10px;
 }
 
@@ -293,7 +319,7 @@
 .markdown-body pre {
   margin: 8px 0;
   border: 1px solid var(--line);
-  background: #0d1521;
+  background: var(--code-bg);
   border-radius: 6px;
   padding: 10px;
   overflow-x: auto;
@@ -301,9 +327,9 @@
 
 .code-block {
   margin: 8px 0;
-  border: 1px solid #233248;
+  border: 1px solid var(--line);
   border-radius: 8px;
-  background: #0f1724;
+  background: var(--code-bg);
   overflow: auto;
 }
 
@@ -312,23 +338,23 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  border-bottom: 1px solid #223347;
-  background: #0c131e;
+  border-bottom: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--code-bg) 88%, black);
   padding: 6px 8px;
 }
 
 .code-lang {
   font-size: 11px;
   font-family: inherit;
-  color: #8ea4c4;
+  color: var(--text-faint);
   letter-spacing: 0.02em;
   text-transform: uppercase;
 }
 
 .code-copy {
-  border: 1px solid #2a3d58;
-  background: #111d2d;
-  color: #b7c8de;
+  border: 1px solid var(--input-border);
+  background: var(--button-bg);
+  color: var(--button-fg);
   border-radius: 6px;
   height: 22px;
   padding: 0 7px;
@@ -340,14 +366,15 @@
 }
 
 .code-copy:hover {
-  color: #e2ecfb;
-  border-color: #3f5f86;
+  color: var(--text-main);
+  border-color: var(--accent-border);
+  background: var(--button-hover);
 }
 
 .code-copy.copied {
-  color: #9ed6b3;
-  border-color: #3d6f56;
-  background: #13241c;
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 50%, var(--line));
+  background: color-mix(in srgb, var(--ok) 16%, var(--bg-subtle));
 }
 
 .code-block pre {
@@ -373,44 +400,44 @@
 }
 
 .tok-keyword {
-  color: #89b4ff;
+  color: var(--vscode-symbolIcon-keywordForeground, #569cd6);
 }
 
 .tok-string {
-  color: #9fd189;
+  color: var(--vscode-symbolIcon-stringForeground, #ce9178);
 }
 
 .tok-number {
-  color: #f4b37a;
+  color: var(--vscode-symbolIcon-numberForeground, #b5cea8);
 }
 
 .tok-comment {
-  color: #7487a5;
+  color: var(--vscode-editorLineNumber-foreground, #6a9955);
 }
 
 .tok-operator {
-  color: #d0ddf4;
+  color: var(--vscode-editor-foreground, var(--text-main));
 }
 
 .tok-property {
-  color: #84d4ff;
+  color: var(--vscode-symbolIcon-propertyForeground, #9cdcfe);
 }
 
 .tok-boolean {
-  color: #d9a6ff;
+  color: var(--vscode-symbolIcon-booleanForeground, #569cd6);
 }
 
 .tok-command {
-  color: #f9d37d;
+  color: var(--vscode-symbolIcon-functionForeground, #dcdcaa);
 }
 
 .inline-code {
   font-family: var(--font-mono);
   font-size: 12px;
-  border: 1px solid #2d3f58;
+  border: 1px solid var(--line);
   border-radius: 4px;
-  background: #0f1724;
-  color: #dce9fb;
+  background: var(--code-bg);
+  color: var(--text-main);
   padding: 0 4px;
 }
 
@@ -436,13 +463,13 @@
 }
 
 .event-main:hover {
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--bg-hover);
 }
 
 .event-icon {
   width: 14px;
   flex: 0 0 14px;
-  color: #71849d;
+  color: var(--text-faint);
 }
 
 .event-row.running .event-icon {
@@ -460,12 +487,12 @@
 
 .event-title {
   font-size: 15px;
-  color: #aebcd1;
+  color: var(--text-muted);
   flex: 1;
 }
 
 .event-toggle {
-  color: #6f8198;
+  color: var(--text-faint);
   transition: transform 120ms ease;
 }
 
@@ -492,15 +519,15 @@
 
 .approval-card {
   margin-top: 12px;
-  border: 1px solid #554628;
-  background: #1b1812;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--line));
+  background: color-mix(in srgb, var(--warn) 12%, var(--bg-subtle));
   border-radius: 8px;
   padding: 10px;
 }
 
 .selection-card {
-  border-color: #27486b;
-  background: #101a27;
+  border-color: var(--line);
+  background: var(--bg-subtle);
 }
 
 .approval-head {
@@ -523,17 +550,17 @@
 }
 
 .diff-box {
-  border: 1px solid #2a3241;
+  border: 1px solid var(--line);
   border-radius: 6px;
-  background: #111824;
+  background: var(--bg-subtle);
   margin-bottom: 8px;
 }
 
 .diff-path {
   font-size: 11px;
-  color: #9eb1cb;
+  color: var(--text-muted);
   padding: 7px 9px;
-  border-bottom: 1px solid #222c3c;
+  border-bottom: 1px solid var(--line-soft);
 }
 
 .diff-box pre {
@@ -560,36 +587,36 @@
 }
 
 .approval-actions .ok {
-  border-color: #2f6a4a;
+  border-color: color-mix(in srgb, var(--ok) 48%, var(--line));
   color: var(--ok);
 }
 
 .approval-actions .no {
-  border-color: #724848;
+  border-color: color-mix(in srgb, var(--bad) 48%, var(--line));
   color: var(--bad);
 }
 
 .composer {
   border-top: 1px solid var(--line);
   padding: 8px 10px 10px;
-  background: linear-gradient(180deg, #070d16 0%, #0b1220 100%);
+  background: var(--bg-main);
 }
 
 .composer-panel {
-  border: 1px solid #1f4776;
+  border: 1px solid var(--input-border);
   border-radius: 10px;
-  background: linear-gradient(180deg, #081221 0%, #091627 100%);
+  background: var(--bg-elev);
   box-shadow:
-    inset 0 1px 0 rgba(185, 215, 255, 0.06),
-    0 0 0 1px rgba(35, 92, 150, 0.18);
+    inset 0 1px 0 color-mix(in srgb, var(--text-main) 7%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--line) 55%, transparent);
   padding: 8px;
 }
 
 .composer-panel:focus-within {
-  border-color: #2c67a5;
+  border-color: var(--accent-border);
   box-shadow:
-    inset 0 1px 0 rgba(185, 215, 255, 0.08),
-    0 0 0 1px rgba(58, 123, 191, 0.28);
+    inset 0 1px 0 color-mix(in srgb, var(--text-main) 10%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder, var(--accent)) 45%, transparent);
 }
 
 .composer-meta-row {
@@ -603,9 +630,9 @@
 .selection-context {
   margin-bottom: 6px;
   font-size: 11px;
-  color: #9db2ce;
-  border: 1px solid #2a3e59;
-  background: #0f1928;
+  color: var(--text-muted);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
   border-radius: 6px;
   padding: 5px 8px;
 }
@@ -627,12 +654,12 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  border: 1px solid #2a374a;
+  border: 1px solid var(--input-border);
   border-radius: 999px;
   padding: 4px 8px;
   font-size: 11px;
-  color: #b5c5dc;
-  background: #121d2d;
+  color: var(--text-muted);
+  background: var(--input-bg);
 }
 
 .attachment-chip button {
@@ -645,9 +672,9 @@
 }
 
 .context-btn {
-  border: 1px solid #2a374a;
-  background: #101a2a;
-  color: #a7b8cf;
+  border: 1px solid var(--input-border);
+  background: var(--button-bg);
+  color: var(--button-fg);
   border-radius: 6px;
   font-size: 12px;
   height: 27px;
@@ -661,7 +688,8 @@
 
 .context-btn:hover {
   color: var(--text-main);
-  border-color: #3f5f86;
+  border-color: var(--accent-border);
+  background: var(--button-hover);
 }
 
 .context-inline {
@@ -683,9 +711,9 @@
 }
 
 .scope-chip {
-  border: 1px solid #2a374a;
-  background: #0d1727;
-  color: #8fa2bf;
+  border: 1px solid var(--input-border);
+  background: var(--button-bg);
+  color: var(--text-muted);
   border-radius: 999px;
   font-size: 11px;
   padding: 4px 10px;
@@ -693,18 +721,18 @@
 }
 
 .scope-chip.on {
-  color: #dbe8fb;
-  border-color: #3b5f89;
-  background: #16304d;
+  color: var(--text-main);
+  border-color: var(--vscode-list-activeSelectionBackground, var(--line));
+  background: var(--vscode-list-activeSelectionBackground, var(--bg-active));
 }
 
 .input-box {
   width: 100%;
   font-family: inherit;
-  border: 1px solid #2a3f58;
+  border: 1px solid var(--input-border);
   border-radius: 8px;
-  background: #0f1b2d;
-  color: var(--text-main);
+  background: var(--input-bg);
+  color: var(--input-fg);
   min-height: 44px;
   max-height: 180px;
   resize: none;
@@ -713,22 +741,22 @@
 }
 
 .input-box:focus {
-  outline: 1px solid #355f8f;
+  outline: 1px solid var(--vscode-focusBorder, var(--accent));
 }
 
 .composer-input {
-  border: 1px solid #203650;
-  background: #0d1829;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
   border-radius: 9px;
   min-height: 58px;
 }
 
 .composer-input:focus {
-  outline: 1px solid #3a78bc;
+  outline: 1px solid var(--vscode-focusBorder, var(--accent));
 }
 
 .composer-input::placeholder {
-  color: #8397b3;
+  color: var(--vscode-input-placeholderForeground, var(--text-faint));
 }
 
 .composer-bottom {
@@ -741,7 +769,7 @@
 .composer-dock {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid #1c314b;
+  border-top: 1px solid var(--line-soft);
 }
 
 .bottom-left {
@@ -758,9 +786,9 @@
 
 .pill-btn {
   font-family: inherit;
-  border: 1px solid #29466a;
-  background: #0f1f34;
-  color: #b5c9e5;
+  border: 1px solid var(--input-border);
+  background: var(--button-bg);
+  color: var(--button-fg);
   border-radius: 999px;
   font-size: 12px;
   padding: 0 11px;
@@ -772,8 +800,9 @@
 }
 
 .pill-btn:hover {
-  border-color: #3c628f;
-  color: #e0ecfd;
+  border-color: var(--accent-border);
+  color: var(--text-main);
+  background: var(--button-hover);
 }
 
 .model-pill {
@@ -791,10 +820,10 @@
 .menu-panel {
   position: absolute;
   z-index: 40;
-  background: #101824;
-  border: 1px solid #273448;
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-border);
   border-radius: 8px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 12px 32px var(--shadow);
   min-width: 170px;
   max-height: 260px;
   overflow-y: auto;
@@ -819,7 +848,7 @@
 }
 
 .temp-head {
-  color: #a7bad2;
+  color: var(--text-muted);
   font-size: 11px;
   letter-spacing: 0.04em;
 }
@@ -829,9 +858,9 @@
 }
 
 .temp-menu input[type='number'] {
-  border: 1px solid #2b3a4f;
-  background: #111a2a;
-  color: #d8e5f6;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--input-fg);
   border-radius: 5px;
   padding: 4px 6px;
   width: 72px;
@@ -842,7 +871,7 @@
   width: 100%;
   border: none;
   background: transparent;
-  color: #b7c4d7;
+  color: var(--menu-fg);
   font-size: 12px;
   border-radius: 6px;
   display: flex;
@@ -854,16 +883,16 @@
 }
 
 .menu-item:hover {
-  background: #1a2638;
+  background: var(--menu-hover);
 }
 
 .menu-item.selected {
-  background: #1b2a41;
-  color: #e0ebfc;
+  background: var(--menu-hover);
+  color: var(--menu-selected-fg);
 }
 
 .chev {
-  color: #71839a;
+  color: var(--text-faint);
   transition: transform 140ms ease;
 }
 
@@ -875,8 +904,8 @@
   width: 26px;
   height: 26px;
   border: none;
-  background: #102038;
-  color: #8ea6c6;
+  background: var(--button-bg);
+  color: var(--button-fg);
   border-radius: 7px;
   display: inline-flex;
   align-items: center;
@@ -886,15 +915,15 @@
 
 .mini-btn:hover {
   color: var(--text-main);
-  background: #143055;
+  background: var(--button-hover);
 }
 
 .send {
   width: 34px;
   height: 30px;
-  border: 1px solid #2f4b6f;
-  background: #10233b;
-  color: #8ca3c3;
+  border: 1px solid var(--input-border);
+  background: var(--button-bg);
+  color: var(--button-fg);
   border-radius: 8px;
   display: inline-flex;
   align-items: center;
@@ -903,14 +932,19 @@
 }
 
 .send.active {
-  color: #d8ebff;
-  border-color: #3e75ac;
-  background: linear-gradient(180deg, #184a7d 0%, #133a66 100%);
+  color: var(--button-primary-fg);
+  border-color: color-mix(in srgb, var(--button-primary-bg) 75%, var(--line));
+  background: var(--button-primary-bg);
 }
 
 .send:hover {
-  border-color: #4d7db1;
-  color: #d8ebff;
+  border-color: var(--accent-border);
+  color: var(--text-main);
+}
+
+.send.active:hover {
+  background: var(--button-primary-hover);
+  color: var(--button-primary-fg);
 }
 
 .send:disabled {
@@ -931,7 +965,7 @@
   height: 1.1em;
   margin-left: 2px;
   vertical-align: middle;
-  border-right: 2px solid #8eb5e9;
+  border-right: 2px solid var(--text-main);
   animation: blink 900ms steps(1) infinite;
 }
 

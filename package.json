@@ -1,8 +1,18 @@
 {
   "name": "olla-chat",
+  "publisher": "vigne",
   "displayName": "Olla Chat",
-  "description": "Professional AI Assistant for VS Code using Ollama",
+  "description": "Professional AI assistant for VS Code with Ollama-first Ask, Plan, and Agent workflows.",
   "version": "0.0.1",
+  "icon": "media/icon.png",
+  "license": "UNLICENSED",
+  "keywords": [
+    "ollama",
+    "ai",
+    "chat",
+    "agent",
+    "vscode"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -20,7 +30,7 @@
         {
           "id": "olla-chat-sidebar",
           "title": "Olla Chat",
-          "icon": "$(hubot)"
+          "icon": "media/view-icon.svg"
         }
       ]
     },
@@ -118,10 +128,13 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run package",
+    "vscode:prepublish": "npm run build:webview && npm run package",
+    "build:webview": "npm --prefix webview-ui run build",
+    "build:all": "npm run build:webview && npm run package",
     "compile": "webpack --mode development",
     "watch": "webpack --mode development --watch",
     "package": "webpack --mode production --devtool hidden-source-map",
+    "package:vsix": "npx @vscode/vsce package --out olla-chat.vsix",
     "webpack": "webpack --mode development",
     "webpack-dev": "webpack --mode development --watch"
   },
