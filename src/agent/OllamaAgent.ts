@@ -55,24 +55,36 @@ const toolExecutors: Record<string, (args: any) => Promise<string>> = {
 };
 
 export class OllamaAgent {
-    private chatModel: any;
     private messages: BaseMessage[] = [];
 
     constructor() {
-        const baseModel = new ChatOllama({
-            baseUrl: "http://localhost:11434",
-            model: "llama3", // User will need to use a model that supports tools, e.g. llama3.1
-            temperature: 0.1,
-        });
-
-        // Bind the JSON schemas to the LLM
-        this.chatModel = (baseModel as any).bindTools(toolSchemas);
-
         this.messages.push(new SystemMessage(
             "You are a professional AI coding assistant running inside VS Code. " +
             "You have access to tools to read files and run terminal commands. " +
             "If a user asks you to do something that requires knowing the codebase, USE YOUR TOOLS first."
         ));
+    }
+
+    private async getChatModel() {
+        const config = vscode.workspace.getConfiguration('olla-chat');
+        const baseUrl = config.get<string>('ollamaUrl', 'http://localhost:11434');
+        let model = config.get<string>('ollamaModel', 'llama3');
+
+        // Verify the model exists, if not, fallback to the first available one to prevent immediate crashes
+        const availableModels = await this.getAvailableModels();
+        if (availableModels.length > 0 && !availableModels.includes(model)) {
+            model = availableModels[0];
+            // Auto-update the workspace configuration so the UI dropdown syncs up
+            vscode.workspace.getConfiguration('olla-chat').update('ollamaModel', model, vscode.ConfigurationTarget.Global);
+        }
+
+        const baseModel = new ChatOllama({
+            baseUrl: baseUrl,
+            model: model,
+            temperature: 0.1,
+        });
+
+        return (baseModel as any).bindTools(toolSchemas);
     }
 
     private getEditorContext(): string {
@@ -96,6 +108,24 @@ export class OllamaAgent {
         return contextBlock;
     }
 
+    public async getAvailableModels(): Promise<string[]> {
+        try {
+            const config = vscode.workspace.getConfiguration('olla-chat');
+            const baseUrl = config.get<string>('ollamaUrl', 'http://localhost:11434');
+            const response = await fetch(`${baseUrl}/api/tags`);
+            if (!response.ok) return [];
+
+            const data: any = await response.json();
+            if (data && data.models) {
+                return data.models.map((m: any) => m.name);
+            }
+            return [];
+        } catch (error) {
+            console.error("Failed to fetch Ollama models:", error);
+            return [];
+        }
+    }
+
     public async sendMessage(
         userText: string,
         onChunk: (chunk: string) => void,
@@ -113,7 +143,8 @@ export class OllamaAgent {
     ) {
         try {
             // Stream the response so the Webview feels fast and professional
-            const stream = await this.chatModel.stream(this.messages);
+            const chatModel = await this.getChatModel();
+            const stream = await chatModel.stream(this.messages);
             let fullResponse = "";
             let toolCalls: any[] = [];
             let insideThinkBlock = false;

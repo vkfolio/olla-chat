@@ -17,8 +17,15 @@ function App() {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [currentModel, setCurrentModel] = useState<string>('llama3');
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    // Request initial models from Extension
+    vscode.postMessage({ type: 'refreshModels' });
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -32,6 +39,12 @@ function App() {
       const message = event.data;
 
       switch (message.type) {
+        case 'initModels':
+          setAvailableModels(message.value || []);
+          break;
+        case 'currentModel':
+          setCurrentModel(message.value || 'llama3');
+          break;
         case 'startStream':
           setIsStreaming(true);
           setMessages((prev) => [...prev, { role: 'assistant', content: '', isThinking: false }]);
@@ -90,6 +103,12 @@ function App() {
     if (textareaRef.current) {
       textareaRef.current.style.height = '40px'; // Reset height
     }
+  };
+
+  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newModel = e.target.value;
+    setCurrentModel(newModel);
+    vscode.postMessage({ type: 'setModel', value: newModel });
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -192,10 +211,26 @@ function App() {
               <div className="tiny-toolbar-btn">
                 <ListTree size={12} /> Plan <span style={{ fontSize: '9px' }}>▼</span>
               </div>
-              <div className="tiny-toolbar-btn">
-                Ollama Llama3 <span style={{ fontSize: '9px' }}>▼</span>
+
+              <div className="tiny-toolbar-btn dropdown-container">
+                {availableModels.length > 0 ? (
+                  <select
+                    value={currentModel}
+                    onChange={handleModelChange}
+                    className="model-select"
+                  >
+                    {availableModels.map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span onClick={() => vscode.postMessage({ type: 'refreshModels' })}>
+                    Loading Models...
+                  </span>
+                )}
               </div>
-              <div className="tiny-toolbar-btn">
+
+              <div className="tiny-toolbar-btn" title="Settings" onClick={() => vscode.postMessage({ type: 'openSettings' })}>
                 <Settings size={12} />
               </div>
             </div>

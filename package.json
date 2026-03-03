@@ -39,7 +39,22 @@
         "title": "Focus Olla Chat",
         "category": "Olla Chat"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Olla Chat Parameters",
+      "properties": {
+        "olla-chat.ollamaUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "The URL to the Ollama instance."
+        },
+        "olla-chat.ollamaModel": {
+          "type": "string",
+          "default": "llama3",
+          "description": "The model to use (requires tool calling support, like llama3 or qwen2.5)."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

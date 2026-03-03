@@ -46,8 +46,34 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
                         webviewView.webview.postMessage({ type: 'endStream' });
                         break;
                     }
+                case 'openSettings':
+                    {
+                        vscode.commands.executeCommand('workbench.action.openSettings', 'olla-chat');
+                        break;
+                    }
+                case 'setModel':
+                    {
+                        vscode.workspace.getConfiguration('olla-chat').update('ollamaModel', data.value, vscode.ConfigurationTarget.Global);
+                        vscode.window.showInformationMessage(`Olla Chat model set to: ${data.value}`);
+                        break;
+                    }
+                case 'refreshModels':
+                    {
+                        const models = await this._agent.getAvailableModels();
+                        webviewView.webview.postMessage({ type: 'initModels', value: models });
+                        break;
+                    }
             }
         });
+
+        // Fetch initial models on load
+        this._agent.getAvailableModels().then(models => {
+            webviewView.webview.postMessage({ type: 'initModels', value: models });
+        });
+
+        // Push the currently selected model
+        const currentModel = vscode.workspace.getConfiguration('olla-chat').get<string>('ollamaModel', 'llama3');
+        webviewView.webview.postMessage({ type: 'currentModel', value: currentModel });
     }
 
     private _getHtmlForWebview(webview: vscode.Webview) {
