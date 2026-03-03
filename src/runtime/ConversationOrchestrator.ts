@@ -899,14 +899,34 @@ export class ConversationOrchestrator {
             this.selectionReplaceIntent.delete(key);
             return;
         }
+        const replacementCandidate = this.normalizeReplacementForEditor(responseText, snapshot);
+        if (!this.isLikelyEditorReplacement(replacementCandidate, snapshot)) {
+            debugLog('Orchestrator', 'Skipping selection replacement due to low-confidence content', {
+                sessionId,
+                turnId,
+                filePath: snapshot.filePath,
+                languageId: snapshot.languageId,
+                candidateLength: replacementCandidate.length
+            });
+            this.selectionSnapshots.delete(key);
+            this.pendingSelectionReplace.delete(key);
+            this.selectionReplaceIntent.delete(key);
+            this.emit({
+                type: 'selection_replace_failed',
+                sessionId,
+                turnId,
+                message: `Model returned non-${snapshot.languageId} replacement content. Ask again with "return only ${snapshot.languageId} code".`
+            });
+            return;
+        }
 
         if (mode === 'agent') {
-            await this.applySelectionReplacement(sessionId, turnId, responseText, 'agent_auto');
+            await this.applySelectionReplacement(sessionId, turnId, replacementCandidate, 'agent_auto');
             return;
         }
 
         if (mode === 'ask') {
-            this.pendingSelectionReplace.set(key, { sessionId, turnId, text: responseText });
+            this.pendingSelectionReplace.set(key, { sessionId, turnId, text: replacementCandidate });
             debugLog('Orchestrator', 'Queued ask-mode selection replacement approval', {
                 sessionId,
                 turnId,
@@ -1071,6 +1091,10 @@ export class ConversationOrchestrator {
         const normalizedReplacement = this.normalizeReplacementForEditor(replacementText, snapshot);
         if (normalizedReplacement.length === 0) {
             emitFailure('Model response did not contain usable replacement content.');
+            return;
+        }
+        if (!this.isLikelyEditorReplacement(normalizedReplacement, snapshot)) {
+            emitFailure(`Model returned non-${snapshot.languageId} replacement content.`);
             return;
         }
 
@@ -1442,14 +1466,52 @@ export class ConversationOrchestrator {
         if (!trimmed) {
             return '';
         }
-        // For cursor inserts, prefer pure code payload if the model wrapped output in fences.
-        if (snapshot.selectedText.length === 0) {
-            const fenced = this.extractFirstCodeFence(trimmed);
-            if (fenced) {
-                return fenced;
-            }
+        // Prefer pure payload from code fences for code files or cursor inserts.
+        const fenced = this.extractFirstCodeFence(trimmed);
+        if (fenced && (snapshot.selectedText.length === 0 || this.isCodeLanguage(snapshot.languageId))) {
+            return fenced;
         }
         return trimmed;
+    }
+
+    private isLikelyEditorReplacement(text: string, snapshot: SelectionSnapshot): boolean {
+        if (text.trim().length === 0) {
+            return false;
+        }
+        if (!this.isCodeLanguage(snapshot.languageId)) {
+            return true;
+        }
+        return this.isCodeLikeForLanguage(text, snapshot.languageId);
+    }
+
+    private isCodeLikeForLanguage(text: string, languageId: string): boolean {
+        const trimmed = text.trim();
+        if (trimmed.length < 4) {
+            return false;
+        }
+        const lowered = trimmed.toLowerCase();
+        if (/^(sure|here|let me|i can|i will|to do this|first,|analysis:|thinking:)/.test(lowered)) {
+            return false;
+        }
+        const genericCodeSignal = /[{}();=]|=>|\b(function|const|let|var|class|import|export|return|if|for|while|async|await)\b/i;
+        if (genericCodeSignal.test(trimmed)) {
+            return true;
+        }
+        if (languageId === 'python') {
+            return /\bdef\b|\bclass\b|:\s*$|\breturn\b/.test(trimmed);
+        }
+        if (languageId === 'json') {
+            return /^[\[{]/.test(trimmed) || /":\s*/.test(trimmed);
+        }
+        if (languageId === 'sql') {
+            return /\b(select|insert|update|delete|create|drop)\b/i.test(trimmed);
+        }
+        return trimmed.split(/\r?\n/).length >= 2 && /[A-Za-z_][\w$]*\s*\(/.test(trimmed);
+    }
+
+    private isCodeLanguage(languageId: string): boolean {
+        const nonCode = new Set(['plaintext', 'markdown', 'mdx', 'text', 'log']);
+        return !nonCode.has(languageId.toLowerCase());
     }
 
     private normalizeTextForDocumentEol(text: string, document: vscode.TextDocument): string {
